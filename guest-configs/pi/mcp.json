@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "web": {
+      "url": "http://%%INFERENCE_IP%%:8325/mcp",
+      "exposure": "direct",
+      "description": "Web search (SearXNG) and page scraping (Firecrawl)"
+    }
+  }
+}

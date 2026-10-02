@@ -1,0 +1,16 @@
+values.sh
+*.qcow2
+*.iso
+*.img
+.ssh/
+AGENTS.md
+work/*
+!work/wallpaper/
+!work/981876.png
+__pycache__/
+*.pyc
+.llmdev
+.ruff_cache/
+host/ruleset-dump.txt
+*.swp
+.DS_Store

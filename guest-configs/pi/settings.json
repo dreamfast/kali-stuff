@@ -1,0 +1,38 @@
+{
+  "defaultAgent": "helper",
+  "lastChangelogVersion": "1.0.0",
+  "theme": "dark",
+  "defaultProvider": "llama-5090",
+  "defaultModel": "qwen38-flash-next",
+  "defaultThinkingLevel": "high",
+  "modelRoles": {
+    "roles": {
+      "default": {
+        "model": "ninfer-4090/qwen3.8-27b",
+        "thinking": "medium",
+        "description": "Subagent work (worker) - delegated implementation on the 4090"
+      },
+      "heavy": {
+        "model": "ninfer-4090/qwen3.8-27b",
+        "thinking": "high",
+        "description": "Deep review / hard reasoning for delegated work"
+      },
+      "fast": {
+        "model": "ninfer-4090/qwen3.8-27b",
+        "thinking": "low",
+        "description": "explorer + researcher: file search, grep, web research"
+      },
+      "utility": {
+        "model": "ninfer-4090/qwen3.8-27b",
+        "thinking": "off",
+        "description": "Throwaway calls: subagent result summaries, session naming"
+      }
+    }
+  },
+  "packages": [
+    "npm:@d3ara1n/pi-subagent",
+    "npm:pi-agent-mode",
+    "npm:@d3ara1n/pi-model-roles"
+  ],
+  "hideThinkingBlock": false
+}

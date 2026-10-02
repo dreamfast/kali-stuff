@@ -1,0 +1,6 @@
+<filesystem type='mount' accessmode='passthrough'>
+  <driver type='virtiofs'/>
+  <binary path='/usr/lib/virtiofsd' xattr='on'/>
+  <source dir='%%HOST_REPO_DIR%%/work'/>
+  <target dir='work'/>
+</filesystem>

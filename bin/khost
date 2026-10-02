@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# khost: ssh into the physical host that runs the Kali QEMU VM.
+# Fully local setup, so there is NO default address. Enable by setting
+# HOST_USER, HOST_ADDR (and optionally HOST_SSH_PORT) in the environment
+# or in values.sh at the repo root. Uses the repo's .ssh/ material.
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# shellcheck source=/dev/null
+[ -f "$ROOT/values.sh" ] && . "$ROOT/values.sh"
+: "${HOST_USER:?khost: HOST_USER not set (local-only setup, no default)}"
+: "${HOST_ADDR:?khost: HOST_ADDR not set (local-only setup, no default)}"
+HOST_SSH_PORT="${HOST_SSH_PORT:-22}"
+SSHDIR="$ROOT/.ssh"
+if [ ! -d "$SSHDIR" ]; then
+  echo "khost: $SSHDIR not found (ssh keys/config are not part of the repo)." >&2
+  exit 1
+fi
+exec ssh \
+  -i "$SSHDIR/hostkey" \
+  -p "$HOST_SSH_PORT" \
+  -o IdentityFile="$SSHDIR/hostkey" \
+  -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile="$SSHDIR/known_hosts" \
+  -o ConnectTimeout=10 \
+  "$HOST_USER@$HOST_ADDR" "$@"

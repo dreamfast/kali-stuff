@@ -1,0 +1,12 @@
+<network>
+  <name>kali-net</name>
+  <bridge name='br-kali' stp='off' delay='0'/>
+  <!-- 'open': no NAT, no filtering - VM traffic is routed/forwarded by the
+       host (and thus by Mullvad's wg0-mullvad policy routing) -->
+  <forward mode='open'/>
+  <ip address='10.170.0.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='10.170.0.100' end='10.170.0.200'/>
+    </dhcp>
+  </ip>
+</network>

@@ -1,0 +1,179 @@
+{
+  "providers": {
+    "ninfer-5090": {
+      "baseUrl": "http://%%INFERENCE_IP%%:8084/v1",
+      "api": "openai-completions",
+      "apiKey": "ninfer",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsThinkingTokenBudget": true
+      },
+      "models": [
+        {
+          "id": "qwen3.8-27b",
+          "name": "ninfer 5090 (qwen3.8-27b)",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 262144,
+          "maxTokens": 131072,
+          "thinkingFormat": "qwen-chat-template",
+          "samplingParams": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0.0,
+            "presence_penalty": 0.0
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    },
+    "ninfer-4090": {
+      "baseUrl": "http://%%INFERENCE_IP%%:8085/v1",
+      "api": "openai-completions",
+      "apiKey": "ninfer",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "supportsThinkingTokenBudget": true
+      },
+      "models": [
+        {
+          "id": "qwen3.8-27b",
+          "name": "ninfer 4090 (qwen3.8-27b)",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 262144,
+          "maxTokens": 131072,
+          "thinkingFormat": "qwen-chat-template",
+          "samplingParams": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0.0,
+            "presence_penalty": 0.0
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    },
+    "llama-5090": {
+      "baseUrl": "http://%%INFERENCE_IP%%:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "no-key",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "qwen38-flash-next",
+          "name": "llama.cpp 8080 (qwen38-flash-next)",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 131072,
+          "maxTokens": 32768,
+          "thinkingFormat": "deepseek",
+          "samplingParams": {
+            "temperature": 1.0,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0.0
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    },
+    "llama-cpu": {
+      "baseUrl": "http://%%INFERENCE_IP%%:8083/v1",
+      "api": "openai-completions",
+      "apiKey": "no-key",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "MiniCPM5-2B-Q4_K_M.gguf",
+          "name": "llama.cpp 8083 (MiniCPM5-2B Q4_K_M)",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "thinkingFormat": "deepseek",
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    },
+    "strata": {
+      "baseUrl": "http://%%INFERENCE_IP%%:8086/v1",
+      "api": "openai-completions",
+      "apiKey": "strata",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "qwen3.8-flash-next",
+          "name": "Qwen3.8 Flash-Next (Strata IQ3_S)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "off",
+            "minimal": "low",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
+          "input": [
+            "text"
+          ],
+          "contextWindow": 262144,
+          "maxTokens": 16384,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}

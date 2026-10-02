@@ -1,0 +1,6 @@
+#!/bin/sh
+# polybar-target: feeds the polybar [module/target] box-context module:
+# tail -F on /tmp/nb-current-target, rewritten on every prompt by the zsh
+# hook. Content = "box · ip" of the focused pane ("" outside a box).
+: > /tmp/nb-current-target 2>/dev/null || true
+exec tail -Fn 1 /tmp/nb-current-target 2>/dev/null

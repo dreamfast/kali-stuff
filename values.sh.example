@@ -1,0 +1,20 @@
+# values.sh.example: copy to values.sh and fill in your own values.
+# values.sh is gitignored: it never leaves this machine.
+#
+# Used by: bin/khost (host ssh), bin/render (token substitution for the
+# libvirt XML + systemd templates), 07-zsh-tweaks.sh (WPSCAN key), and
+# host/01-setup-host.sh (LAN target for the VM -> LAN masquerade).
+
+# host that runs QEMU/KVM (khost; leave HOST_ADDR empty to disable)
+HOST_USER=youruser
+HOST_ADDR=
+HOST_SSH_PORT=22
+
+# where this repo lives ON the host (%%HOST_REPO_DIR%% in host/ templates)
+HOST_REPO_DIR=/absolute/path/to/kali
+
+# LAN address of your local inference box (%%INFERENCE_IP%% in the pi config)
+INFERENCE_IP=192.168.0.2
+
+# WPScan API token (https://wpscan.com/api), exported into the guest zsh env
+WPSCAN_API_KEY=

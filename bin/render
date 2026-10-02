@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# render: substitute %%TOKEN%% values from values.sh into a template on
+# stdout. Used for the libvirt XML and systemd templates in host/, which
+# contain %%HOST_USER%% / %%HOST_REPO_DIR%% / %%INFERENCE_IP%%.
+#   bin/render host/kali-domain.xml | virsh -c qemu:///system define /dev/stdin
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+# shellcheck source=/dev/null
+[ -f "$ROOT/values.sh" ] || { echo "render: $ROOT/values.sh not found (copy values.sh.example)" >&2; exit 1; }
+# shellcheck source=/dev/null
+. "$ROOT/values.sh"
+for f in "$@"; do
+  sed -e "s|%%HOST_USER%%|${HOST_USER:-}|g" \
+      -e "s|%%HOST_REPO_DIR%%|${HOST_REPO_DIR:-}|g" \
+      -e "s|%%HOST_ADDR%%|${HOST_ADDR:-}|g" \
+      -e "s|%%HOST_SSH_PORT%%|${HOST_SSH_PORT:-22}|g" \
+      -e "s|%%INFERENCE_IP%%|${INFERENCE_IP:-}|g" \
+      "$f"
+done

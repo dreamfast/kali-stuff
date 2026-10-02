@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# kvirsh: virsh against the host's libvirtd (qemu:///system), via the
+# /run/libvirt unix socket.
+if [ -S /run/libvirt/libvirt-sock ]; then
+  exec virsh -c qemu:///system "$@"
+fi
+echo "kvirsh: /run/libvirt/libvirt-sock not reachable." >&2
+echo "kvirsh: the libvirt system socket must be available here," >&2
+echo "kvirsh: and libvirt-clients (virsh) installed." >&2
+exit 1

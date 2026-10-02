@@ -1,0 +1,24 @@
+#!/bin/sh
+# pane-cmd <pane_id> [cmd|path]: what is REALLY running in a recorded pane.
+# Panes run wrec -> script -> zsh on a second pty (termlog recording), so
+# tmux's #{pane_current_command}/#{pane_current_path} are frozen at
+# "script" + the creation dir. Walk the inner chain instead:
+#   script -> zsh -> foreground command (zsh when idle).
+#   cmd   (default): basename of the deepest first-child process
+#   path:            cwd of that process (~ abbreviated)
+# Used by tmux.conf's pane-border-format. #() results are cached for up to
+# status-interval (5s) — the header lags ~5s behind reality.
+case $1 in %*) tgt=$1 ;; *) tgt=%$1 ;; esac
+pid=$(tmux display-message -p -t "$tgt" '#{pane_pid}' 2>/dev/null) || exit 0
+[ -n "${pid:-}" ] || exit 0
+i=0
+while [ "$i" -lt 5 ]; do
+  kid=$(ps -o pid= --ppid "$pid" 2>/dev/null | head -n 1 | tr -d ' ')
+  [ -n "$kid" ] || break
+  pid=$kid
+  i=$((i + 1))
+done
+case ${2:-cmd} in
+  path) readlink "/proc/$pid/cwd" 2>/dev/null | sed 's|^/home/kali|~|' ;;
+  *)    ps -o comm= -p "$pid" 2>/dev/null ;;
+esac

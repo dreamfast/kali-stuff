@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# nhosts: append this box's discovered domains to /etc/hosts (sudo).
+# usage: nhosts [file]  (default recon/enum4linux.txt; fallback: the
+# smb-os-discovery block in recon/scan.txt.nmap). Parses enum4linux-ng
+# DNS/NetBIOS names or nmap keys, deduped per (IP, name), marked
+# '# newbox:', logged to the note via `n` when $PLATFORM is set.
+set -u
+
+[ -n "${BOX:-}" ] || { echo "nhosts: not in a box (no \$BOX); run newbox first" >&2; exit 1; }
+ip=${IP:-}
+[ -n "$ip" ] || { echo "nhosts: no \$IP in this box (set it in .envrc, direnv allow, cd in)" >&2; exit 1; }
+[ "$ip" != REPLACE_ME ] || { echo "nhosts: IP is REPLACE_ME; set it in .envrc first" >&2; exit 1; }
+
+file=${1:-recon/enum4linux.txt}
+
+strip_ansi() { sed -e "s/\x1b\[[0-9;?]*[a-zA-Z]//g" -e "s/\x1b\]\[^\x07\]*\x07//g" -e "s/\r\$//"; }
+
+dnsdom=; nbdom=; cname=
+if [ -f "$file" ]; then
+  clean=$(strip_ansi < "$file")
+  dnsdom=$(printf '%s\n' "$clean" | sed -n 's/^[[:space:]]*DNS domain: *//Ip' | grep -v '^[[:space:]]*$' | head -1)
+  [ -n "$dnsdom" ] || dnsdom=$(printf '%s\n' "$clean" | sed -n 's/.*Long domain name is: *//Ip' | grep -v '^[[:space:]]*$' | head -1)
+  nbdom=$(printf '%s\n' "$clean" | sed -n 's/^[[:space:]]*NetBIOS domain name: *//Ip' | grep -v '^[[:space:]]*$' | head -1)
+  cname=$(printf '%s\n' "$clean" | sed -n 's/^[[:space:]]*NetBIOS computer name: *//Ip' | grep -v '^[[:space:]]*$' | head -1)
+fi
+# nmap smb-os-discovery fallback
+scan=recon/scan.txt.nmap
+if [ ! -f "$file" ] && [ -f "$scan" ]; then
+  clean2=$(strip_ansi < "$scan")
+  [ -n "$dnsdom" ] || dnsdom=$(printf '%s\n' "$clean2" | sed -n 's/^[[:space:]]*|[[:space:]]*dnsdomain: *//p' | grep -v '^[[:space:]]*$' | head -1)
+  [ -n "$nbdom" ]  || nbdom=$(printf '%s\n' "$clean2" | sed -n 's/^[[:space:]]*|[[:space:]]*workgroup: *//p' | grep -v '^[[:space:]]*$' | head -1)
+  [ -n "$cname" ]  || cname=$(printf '%s\n' "$clean2" | sed -n 's/^[[:space:]]*|[[:space:]]*netbioscomputername: *//p' | grep -v '^[[:space:]]*$' | head -1)
+  [ -n "$cname" ]  || cname=$(printf '%s\n' "$clean2" | sed -n 's/^[[:space:]]*|[[:space:]]*name: *//p' | grep -v '^[[:space:]]*$' | head -1)
+fi
+
+# FQDN = <computer>.<dns-domain>, lowercased (only when both parts known)
+fqdn=
+[ -n "$cname" ] && [ -n "$dnsdom" ] && fqdn=$(printf '%s' "$cname.$dnsdom" | tr '[:upper:]' '[:lower:]')
+
+[ -n "$dnsdom" ] || [ -n "$nbdom" ] || [ -n "$fqdn" ] || { echo "nhosts: no domain found in ${file}${scan:+ or $scan}; nothing to add"; exit 0; }
+
+# have <domain>: domain already mapped to THIS ip in /etc/hosts (case-insensitive)?
+have() { awk -v ip="$ip" -v d="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" '$1==ip { for (i=2; i<=NF; i++) if (tolower($i)==d) { found=1; exit } } END { exit !found }' /etc/hosts; }
+
+lines=; added=; skipped=
+add_name() { # $1 = candidate name (skipped if empty or already added)
+  local d=$1 w
+  [ -z "$d" ] && return
+  for w in $lines; do [ "$w" = "$d" ] && return; done   # word match; substring false-positives (a.htb ⊂ dc.a.htb)
+  if have "$d"; then skipped="$d $skipped"; else lines+="$d "; added="$d $added"; fi
+}
+add_name "$dnsdom"
+add_name "$fqdn"
+add_name "$nbdom"
+
+if [ -n "$lines" ]; then
+  { echo "# newbox: $BOX $(date +%F)"; echo "$ip $lines"; } | sudo tee -a /etc/hosts >/dev/null
+  echo "nhosts: /etc/hosts += '$ip $lines'"
+  if [ -n "${PLATFORM:-}" ] && command -v n >/dev/null 2>&1; then
+    n -t recon "added to /etc/hosts: $ip $lines" || true
+  fi
+else
+  echo "nhosts: $ip already maps: $skipped"
+fi

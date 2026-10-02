@@ -1,0 +1,37 @@
+#!/bin/sh
+# wp-rotate: random wallpaper from $WALLPAPER_DIR (default ~/work/wallpaper).
+#   wp-rotate | pick | --loop (every $WP_LOOP seconds, default 3600)
+# Self-heals DISPLAY/XAUTHORITY from i3's environ (works detached). The loop's
+# sleep closes lock-fd 9 so an orphan sleep can't hold the flock.
+DIR=${WALLPAPER_DIR:-$HOME/work/wallpaper}
+FALLBACK=$HOME/work/981876.png
+LASTF=$HOME/.cache/wp-last
+LOOP=${WP_LOOP:-3600}
+: "${DISPLAY:=:0}"
+if [ -z "${XAUTHORITY:-}" ]; then
+  ip=$(pgrep -x i3 | head -1)
+  [ -n "$ip" ] && XAUTHORITY=$(tr "\0" "\n" < /proc/"$ip"/environ 2>/dev/null | sed -n "s/^XAUTHORITY=//p" | head -1)
+fi
+export DISPLAY XAUTHORITY
+mkdir -p "$HOME/.cache"
+
+pick() {
+  f=$(find "$DIR" -maxdepth 1 -type f 2>/dev/null | shuf -n 1)
+  if [ -n "$f" ] && [ "$f" = "$(cat "$LASTF" 2>/dev/null)" ]; then
+    f=$(find "$DIR" -maxdepth 1 -type f 2>/dev/null | grep -vxF "$LASTF" | shuf -n 1)
+  fi
+  [ -n "$f" ] || { [ -f "$FALLBACK" ] && f=$FALLBACK; }
+  [ -n "$f" ] && printf "%s" "$f"
+}
+
+apply() {
+  f=$(pick) || return 1
+  feh --bg-fill "$f" && { printf "%s" "$f" > "$LASTF"; echo "wp: $f"; }
+}
+
+case "${1:-}" in
+  pick)   pick; echo ;;
+  --loop) exec 9>"$HOME/.cache/wp-rotate.lock"; flock -n 9 || exit 0
+          apply; while :; do sleep "$LOOP" 9>&-; apply; done ;;
+  *)      apply ;;
+esac

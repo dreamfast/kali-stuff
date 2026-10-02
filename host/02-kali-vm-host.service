@@ -1,0 +1,18 @@
+# Install with:
+#   sudo cp 02-kali-vm-host.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now kali-vm-host.service
+[Unit]
+Description=Kali VM host network setup (nftables + forwarding + Mullvad NAT)
+# local-fs.target: the repo mount (LUKS) must be up so the script is readable
+# libvirtd: br-kali (kali-net, autostart) must exist before rules reference it
+# docker: DOCKER-USER iptables chain must exist before we insert rules
+After=local-fs.target libvirtd.service docker.service nftables.service
+Wants=libvirtd.service docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ConditionPathExists=%%HOST_REPO_DIR%%/host/01-setup-host.sh
+ExecStart=%%HOST_REPO_DIR%%/host/01-setup-host.sh
+
+[Install]
+WantedBy=multi-user.target

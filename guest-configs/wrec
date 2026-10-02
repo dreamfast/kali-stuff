@@ -1,0 +1,9 @@
+#!/bin/sh
+# wrec: pane termlog recorder (tmux default-command wrapper; tmux.conf:113)
+# Records this pane's terminal to $TERMLOG_DIR/<session>/rec_<ts>_<pane>,
+# then drops into the login shell. Naming must match `n -l`'s glob:
+# ${TERMLOG_DIR:-$HOME/work/termlogs}/*/rec_*_<TMUX_PANE>.
+s=$(tmux display -p '#{session_name}' 2>/dev/null || echo orphan)
+d=${TERMLOG_DIR:-$HOME/work/termlogs}/$s
+mkdir -p "$d" 2>/dev/null
+exec script -qef "$d/rec_$(date +%Y%m%d_%H%M%S)_${TMUX_PANE:-%0}" -c "${SHELL:-/bin/zsh}"

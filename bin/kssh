@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# kssh: ssh into the Kali guest (kali@10.170.0.2) via the repo's .ssh/
+# material (self-contained; no reliance on the caller's ~/.ssh).
+#
+# Install (symlink, NOT copy; the repo root is resolved from this file's
+# real location, so git updates flow through):
+#   ln -sfn <repo>/bin/kssh ~/.local/bin/kssh
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+SSHDIR="$ROOT/.ssh"
+if [ ! -d "$SSHDIR" ]; then
+  echo "kssh: $SSHDIR not found (ssh keys/config are not part of the repo; see README)." >&2
+  exit 1
+fi
+exec ssh \
+  -F "$SSHDIR/config" \
+  -i "$SSHDIR/kalivm" \
+  -o IdentityFile="$SSHDIR/kalivm" \
+  -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile="$SSHDIR/known_hosts" \
+  -o ConnectTimeout=10 \
+  kali "$@"

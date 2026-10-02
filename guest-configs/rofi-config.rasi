@@ -1,0 +1,19 @@
+/* rofi 2.0 · dexpota/amber · 2026-10-02
+ * Frosted launcher: ARGB window bg + picom blur behind (class_i 'rofi'
+ * rule in picom.conf). Rofi rounds its own corners; picom's corner clip
+ * stays 0 for rofi so they don't double-round.
+ * TRAP: rofi 2.0 has NO inline `theme { }` block in config.rasi (parse
+ * error at the `theme` token) — the theme lives in dexpota-frost.rasi
+ * (synced as guest-configs/rofi-theme.rasi) and is pulled in via @theme.
+ * TRAP: custom theme properties must be referenced as var(name), not bare. */
+configuration {
+    modi: "drun,run,window";
+    show-icons: true;
+    icon-theme: "Adwaita";
+    font: "monospace 11";
+    display-drun: "run";
+    display-run: "exec";
+    display-window: "win";
+    drun-display-format: "{name}";
+}
+@theme "dexpota-frost"

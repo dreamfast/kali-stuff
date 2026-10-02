@@ -1,0 +1,538 @@
+#!/usr/bin/env python3
+# =============================================================================
+# n: terminal → Obsidian bridge: append lines/files/command output/termlog
+# excerpts to the CURRENT box's note. Only works inside a box (newbox's
+# .envrc sets $BOX + $PLATFORM via direnv).
+#
+# After ANY successful append, an image on the X clipboard is saved to the
+# vault's Attachments/<box>/ and embedded below the new text. Default target
+# section = the box's STAGE (.envrc; `stage <s>` switches it); an explicit
+# -t still overrides, answer/flag still forces ## Flags.
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+
+USAGE = """\
+n: terminal → Obsidian bridge, append to the CURRENT box's note.
+Run inside a box (newbox sets $BOX/$PLATFORM via direnv).
+
+FORM
+  n [options] [words ...]      bare words = ONE note line (no quoting needed)
+
+OPTIONS
+  -t SECTION   target section: recon | findings | foothold | privesc |
+               notes | flags  (one -t per call, applies to the whole payload;
+               a missing section is created as ## Title at the end).
+               Default: the box's current STAGE (.envrc; starts at recon,
+               switch with `stage <s>`), or ## Notes for stage-less boxes.
+  -f FILE      append FILE as a fenced block (repeatable; --file=FILE too)
+  -c CMD       run CMD, capture its ANSI-stripped output as a labeled fenced
+               block (repeatable; quote it; --cmd=CMD too)
+  -l, --last[=N]  pull the last N (default 1) commands of THIS pane + their
+               output from the pane's termlog recording, as a fenced block.
+               Knows its own invocation; even `cd box && n -l` skips itself
+  answer FLAG  shortcut for `-t flags FLAG` (word form: n answer THU{...})
+
+CLIPBOARD
+  After ANY successful append, an image sitting on the X clipboard
+  (flameshot Ctrl+Print leaves one) is saved into the vault's
+  Attachments/<box>/ and embedded below the new text, no bullet. The
+  clipboard is consumed on embed (cleared once the image lands in the
+  note); text-only clipboards are ignored.
+  -h, --help   this help
+
+EXAMPLES
+  n found sqli on /login; waf blocks union
+  n -t findings -c "nxc smb $IP -u '' -p '' --shares"
+  n -f recon/scan.txt.nmap "full range done"
+  n -l                            # previous command + output
+  n --last=3 -t recon "wrap-up"   # last 3 commands, into ## Recon
+  n answer THU{a1b2c3}
+
+LANDING (same lookup as newbox; note must exist; run newbox first)
+  htb  → 04 - HTB Boxes/NN - <Box>.md
+  hs   → 12 - Hack Smarter/NN - <Box>.md
+  cjca → 07 - Certifications/CJCA Exam/Targets/<Box>/<Box>.md
+"""
+
+MAX_LINES = 2000
+MAX_BYTES = 122880
+
+SECTIONS = {
+    "recon": "Recon",
+    "findings": "Findings",
+    "foothold": "Foothold",
+    "privesc": "Privesc",
+    "notes": "Notes",
+    "flags": "Flags",
+}
+
+
+def die(msg, code=1):
+    print(f"n: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def stage_section(box):
+    """Default section from the box's STAGE; the .envrc file is the source
+    of truth (`stage <s>` rewrites it; every pane reads it fresh), $STAGE
+    env only as fallback. Unknown/missing → '' (old ## Notes/## Log)."""
+    stage = ""
+    root = os.environ.get("CTFS_ROOT", os.path.expanduser("~/work/ctf"))
+    try:
+        with open(os.path.join(root, box, ".envrc"), encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r"^export STAGE=(\S+)", line)
+                if m:
+                    stage = m.group(1)
+                    break
+    except OSError:
+        pass
+    if not stage:
+        stage = os.environ.get("STAGE", "")
+    return SECTIONS.get(stage.strip().lower(), "")
+
+
+# --------------------------------------------------------------------- args
+def parse_args(argv):
+    opts = {"files": [], "cmds": [], "texts": [], "sect": None, "lastcnt": 0}
+    args = argv[:]
+    while args:
+        a = args[0]
+        if a in ("-f", "--file"):
+            if len(args) < 2:
+                die(f"{a} needs a file argument")
+            opts["files"].append(args[1]); args = args[2:]
+        elif a.startswith("--file="):
+            opts["files"].append(a[len("--file="):]); args = args[1:]
+        elif a in ("-c", "--cmd", "--run"):
+            if len(args) < 2:
+                die(f"{a} needs a command argument (quote it)")
+            opts["cmds"].append(args[1]); args = args[2:]
+        elif a.startswith("--cmd="):
+            opts["cmds"].append(a[len("--cmd="):]); args = args[1:]
+        elif a in ("-t", "--type"):
+            if len(args) < 2:
+                die(f"{a} needs a section (recon|findings|foothold|privesc|notes|flags)")
+            if opts["sect"]:
+                die("-t/--type given more than once")
+            opts["sect"] = args[1]; args = args[2:]
+        elif a.startswith("--type="):
+            if opts["sect"]:
+                die("-t/--type given more than once")
+            opts["sect"] = a[len("--type="):]; args = args[1:]
+        elif a in ("-l", "--last"):
+            opts["lastcnt"] = 1; args = args[1:]
+        elif a.startswith("--last="):
+            v = a[len("--last="):]
+            if not v.isdigit() or int(v) < 1:
+                die("--last=N needs an integer N >= 1")
+            opts["lastcnt"] = int(v); args = args[1:]
+        elif a == "--":
+            args = args[1:]
+            while args:
+                opts["texts"].append(args[0]); args = args[1:]
+        elif a in ("answer", "flag"):
+            if opts["sect"]:
+                die("answer/flag combined with -t; pick one")
+            opts["sect"] = "flags"; args = args[1:]
+        else:
+            opts["texts"].append(a); args = args[1:]
+    return opts
+
+
+# ------------------------------------------------------------------ payload
+ANSI_CSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+ANSI_OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+ANSI_DCS = re.compile(r"\x1b[PX^_][^\x1b]*(?:\x1b\\)")
+
+
+def strip_ansi(s):
+    s = ANSI_CSI.sub("", s)
+    s = ANSI_OSC.sub("", s)
+    s = ANSI_DCS.sub("", s)
+    return s
+
+
+def cap(text):
+    """Cap a payload body at MAX_LINES lines / MAX_BYTES bytes."""
+    lines = text.split("\n")[:MAX_LINES]
+    return "\n".join(lines)[:MAX_BYTES]
+
+
+def build_payload(opts, ts):
+    parts = []
+    if opts["texts"]:
+        parts.append(f"- {ts}; {' '.join(opts['texts'])}\n")
+
+    for f in opts["files"]:
+        if not os.path.isfile(f):
+            die(f"no such file: {f}")
+        label = os.path.relpath(f) if os.path.abspath(f).startswith(os.getcwd() + os.sep) else f
+        with open(f, "rb") as fh:
+            raw = fh.read()
+        body = cap(strip_ansi(raw.decode("utf-8", "replace")).replace("\r", ""))
+        more = " _(truncated)_" if len(raw.decode('utf-8', 'replace')) > MAX_BYTES \
+            or raw.count(b"\n") + 1 > MAX_LINES else ""
+        parts.append(f"- {ts}; dumped: {label}{more}\n\n```\n{body}\n```\n\n")
+
+    for c in opts["cmds"]:
+        proc = subprocess.run(c, shell=True, check=False,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        rc = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
+        body = cap(strip_ansi(proc.stdout.decode("utf-8", "replace")))
+        more = f" _(exit {rc})_" if rc != 0 else ""
+        parts.append(f"- {ts}; ran: `{c}`{more}\n\n```\n{body}\n```\n\n")
+
+    if opts["lastcnt"] > 0:
+        block = extract_last(opts["lastcnt"])
+        if not opts["texts"]:
+            parts.append(f"- {ts}; last command (termlog excerpt)\n")
+        parts.append(f"\n```\n{block}\n```\n\n")
+
+    return "".join(parts)
+
+
+# ------------------------------------------------------------------- --last
+# The termlog trail separator, as printed by _nb_cmd_sep (ctf-zsh-funcs):
+#   ──▶ [user@host YYYY-MM-DD HH:MM:SS] <command line>
+# ONLY this exact shape parses as a command boundary: `» [autoscan] ...`
+# banners, phantom empty lines and any other bracketed prefix don't match.
+# (Legacy `── [` recordings, pre-▶ sentinel, are intentionally unsupported.)
+SEP_RE = re.compile(r"^──▶ \[\S+@\S+ \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] ?(.*)$")
+SELF_FLAG_RE = re.compile(r"(^|\s)(--last(=\d+)?|-l)(\s|$)")
+
+
+def is_self(cmd):
+    """Any && || ; | segment that is an `n` invocation with -l/--last counts;
+    `cd ~/work/ctf/x && n -l` is still THIS call, not a previous command."""
+    for seg in re.split(r"&&|\|\||;|\||\n", cmd):
+        seg = re.sub(r"^(\w+=\S+\s+)+", "", seg.strip())  # env prefixes
+        toks = seg.split()
+        if toks and (toks[0] == "n" or toks[0].endswith("/n")) and SELF_FLAG_RE.search(seg):
+            return True
+    return False
+
+
+def clean_line(line):
+    """Emulate \\r line-rewrites (progress bars): keep the last written
+    state, and apply \\b overwrite semantics within each segment."""
+    out = []
+    for seg in line.split("\r"):
+        buf, cur = [], 0
+        for ch in seg:
+            if ch == "\x08":
+                cur = max(0, cur - 1)
+            elif cur < len(buf):
+                buf[cur] = ch
+                cur += 1
+            else:
+                buf.append(ch)
+                cur += 1
+        out.append("".join(buf))
+    for seg in reversed(out):
+        if seg:
+            return seg
+    return ""
+
+
+def is_prompt(s):
+    s = s.strip()
+    if not s:
+        return False
+    if s[0] in "┌└":  # kali 2-line prompt glyphs; check FIRST: the zle
+        return True   # typed-echo line (└─$ <cmd>) is long but still a prompt
+    if len(s) > 100:
+        return False
+    return bool(re.match(r"^[#$%~❯➜]", s) and re.search(r"[#❯$%➜]\s*$", s))
+
+
+def find_recording(pane):
+    troot = os.environ.get("TERMLOG_DIR", os.path.expanduser("~/work/termlogs"))
+    best = None
+    if os.path.isdir(troot):
+        for sess in os.listdir(troot):
+            sdir = os.path.join(troot, sess)
+            if not os.path.isdir(sdir):
+                continue
+            for f in os.listdir(sdir):
+                if f.endswith("_" + pane):
+                    p = os.path.join(sdir, f)
+                    st = os.stat(p)
+                    if best is None or st.st_mtime > best[1]:
+                        best = (p, st.st_mtime)
+    return best[0] if best else None
+
+
+def extract_last(n):
+    pane = os.environ.get("TMUX_PANE", "")
+    if not pane:
+        die("--last needs a tmux pane recording (no $TMUX_PANE)")
+    rec = find_recording(pane)
+    if not rec:
+        troot = os.environ.get("TERMLOG_DIR", os.path.expanduser("~/work/termlogs"))
+        die(f"--last: no recording for pane {pane} in {troot}")
+
+    with open(rec, "rb") as fh:
+        raw = fh.read()[-524288:].decode("utf-8", "replace")
+    raw = strip_ansi(raw)
+    raw = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", raw)  # keep \n (\x0a)
+
+    lines = [clean_line(l) for l in raw.split("\n")]
+    lines = [l for l in lines if not re.match(r"^Script (started|done) on ", l)]
+
+    seps = [(i, m.group(1)) for i, l in enumerate(lines) if (m := SEP_RE.match(l))]
+    # empty-command separators are artifacts of non-interactive zsh scripts
+    # (hook fired per line with no cmdline); never command boundaries
+    real = [(i, c) for i, c in seps if c.strip()]
+
+    # the trailing separator(s) are this very `n --last` call (preexec fired
+    # before us); pop them and remember where the self-call section starts
+    self_starts = []
+    while real and is_self(real[-1][1]):
+        self_starts.append(real[-1][0])
+        real.pop()
+    if len(real) < n:
+        die(f"--last: only {len(real)} command(s) recorded in this pane")
+    start = real[-n][0]
+    # cut at the first self-call separator; everything from there on is the
+    # typed echo/output of THIS invocation (+ any earlier n -l output)
+    end = min(self_starts) if self_starts else len(lines)
+    blk = lines[start:end]
+
+    # trim the trailing prompt + the typed echo of this `n --last` call
+    budget = 12
+    while blk and budget > 0:
+        s = blk[-1].strip()
+        if (s == "" or is_prompt(blk[-1]) or s.startswith("n: ")
+                or SELF_FLAG_RE.search(s)
+                or (len(s) < 40 and "n" in s and re.search(r"-\s*l|nl[^a-z]", s))):
+            blk.pop()
+            budget -= 1
+            continue
+        break
+    while blk and blk[-1].strip() == "":
+        blk.pop()
+    if not blk:
+        die("--last: nothing recorded for this pane yet")
+    return cap("\n".join(blk))
+
+
+# ------------------------------------------------------------------- insert
+def insert(note, payload, sect):
+    with open(note, encoding="utf-8") as fh:
+        raw = fh.read()
+    lines = raw.splitlines(keepends=True)
+    if sect:
+        pat = re.compile(r"^##\s+" + re.escape(sect) + r"\s*$", re.IGNORECASE)
+        idxs = [k for k, l in enumerate(lines) if pat.match(l.strip())]
+    else:
+        idxs = [k for k, l in enumerate(lines)
+                if re.match(r"^##\s+(Notes|Log)\s*$", l.strip())]
+    if idxs:
+        i = idxs[-1]
+        j = i + 1
+        fence = False
+        while j < len(lines):
+            ls = lines[j].lstrip()
+            if ls.startswith(("```", "~~~")):
+                fence = not fence
+                j += 1
+                continue
+            if not fence and (lines[j].startswith("## ") or lines[j].startswith("---")):
+                break
+            j += 1
+        k = j - 1
+        while k > i and lines[k].strip() == "":
+            k -= 1
+        if not lines[k].endswith("\n"):  # last line may lack a trailing
+            lines[k] += "\n"             # newline (Obsidian/manual edits)
+        lines.insert(k + 1, payload)
+        with open(note, "w", encoding="utf-8") as fh:
+            fh.writelines(lines)
+    else:
+        if not raw.endswith("\n"):
+            raw += "\n"
+        raw += "\n## " + (sect or "Log") + "\n" + payload
+        with open(note, "w", encoding="utf-8") as fh:
+            fh.write(raw)
+
+
+# ---------------------------------------------------------------- clipboard
+CLIP_CACHE = os.path.expanduser("~/.cache/n-clip.json")
+
+
+def clipboard_image():
+    """(bytes, ext) of an image on the X clipboard, else None.
+    Silent on no-DISPLAY/no-xclip (plain ssh) and text-only clipboards."""
+    if not os.environ.get("DISPLAY") or not shutil.which("xclip"):
+        return None
+    try:
+        tgt = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"],
+            check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+        if tgt.returncode != 0:
+            return None
+        targets = tgt.stdout.decode("utf-8", "replace").split()
+        pref = ("image/png", "image/jpeg", "image/jpg", "image/webp",
+                "image/bmp", "image/gif", "image/tiff")
+        mime = next((t for t in pref if t in targets), None) \
+            or next((t for t in targets if t.startswith("image/")), None)
+        if not mime:
+            return None
+        data = subprocess.run(
+            ["xclip", "-selection", "clipboard", "-t", mime, "-o"],
+            check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+        if data.returncode != 0 or len(data.stdout) < 64:
+            return None
+        if data.stdout[:8] == b"\x89PNG\r\n\x1a\n":
+            ext = "png"          # magic beats mime for the extension
+        elif data.stdout[:3] == b"\xff\xd8\xff":
+            ext = "jpg"
+        elif data.stdout[:3] == b"GIF":
+            ext = "gif"
+        else:
+            ext = mime.split("/", 1)[1].replace("jpeg", "jpg")
+        return data.stdout, ext
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def clip_seen(note, digest):
+    try:
+        with open(CLIP_CACHE) as fh:
+            return json.load(fh).get(note) == digest
+    except (OSError, ValueError):
+        return False
+
+
+def clip_mark(note, digest):
+    try:
+        try:
+            with open(CLIP_CACHE) as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            state = {}
+        state[note] = digest
+        os.makedirs(os.path.dirname(CLIP_CACHE), exist_ok=True)
+        with open(CLIP_CACHE, "w") as fh:
+            json.dump(state, fh)
+    except OSError:
+        pass
+
+
+def save_attachment(data, ext, box, obsidian):
+    """Write the image into the vault's Attachments/<box>/ (folder created
+    if missing) → wikilink filename (Obsidian resolves it vault-wide)."""
+    adir = os.path.join(obsidian, "Attachments", box)
+    os.makedirs(adir, exist_ok=True)
+    slug = re.sub(r"[^a-z0-9]+", "-", box.lower()).strip("-") or "box"
+    base = datetime.now().astimezone().strftime(f"scr-{slug}-%Y%m%d-%H%M%S")
+    name = f"{base}.{ext}"
+    n = 1
+    while os.path.exists(os.path.join(adir, name)):
+        n += 1
+        name = f"{base}-{n}.{ext}"
+    with open(os.path.join(adir, name), "wb") as fh:
+        fh.write(data)
+    return name
+
+
+def embed_clipboard(note, sect, box, obsidian):
+    """Append a clipboard image below the just-written payload (once per
+    note per image; same clipboard in a later call doesn't re-embed)."""
+    img = clipboard_image()
+    if not img:
+        return
+    data, ext = img
+    digest = hashlib.sha256(data).hexdigest()
+    if clip_seen(note, digest):
+        return
+    name = save_attachment(data, ext, box, obsidian)
+    insert(note, f"\n![[{name}]]\n", sect)
+    clip_mark(note, digest)
+    print(f"n: + screenshot {name}")
+    # consume: the image is in the note now; clear the clipboard so a stale
+    # screenshot doesn't leak into later notes (vdagent shares this slot
+    # with the host; if the image is still here, nothing else was copied
+    # since, so clearing it loses nothing). Best-effort.
+    try:
+        subprocess.run(["xclip", "-selection", "clipboard", "-i"],
+                       input=b"", check=False, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+# --------------------------------------------------------------------- main
+def main():
+    argv = sys.argv[1:]
+    if any(a in ("-h", "--help") for a in argv):
+        print(USAGE, end="")
+        return 0
+
+    box = os.environ.get("BOX", "")
+    if not box:
+        die("not in a box (no $BOX); run newbox first")
+    if not argv:
+        die("usage: n [-t section] <text words...> | n answer <flag> | n -f <file> ... | n -c <cmd> ...")
+
+    obsidian = os.environ.get("OBSIDIAN_ROOT", os.path.expanduser("~/obsidian"))
+    title = box[:1].upper() + box[1:]
+    plat = os.environ.get("PLATFORM", "")
+    if plat == "HTB":
+        fold, pat = os.path.join(obsidian, "04 - HTB Boxes"), r"^\d{2} - " + re.escape(title) + r"\.md$"
+    elif plat == "HS":
+        fold, pat = os.path.join(obsidian, "12 - Hack Smarter"), r"^\d{2} - " + re.escape(title) + r"\.md$"
+    elif plat == "CJCA":
+        fold = os.path.join(obsidian, "07 - Certifications", "CJCA Exam", "Targets", title)
+        pat = r"^" + re.escape(title) + r"\.md$"
+    elif plat == "WEB":
+        print(f"n: web box '{box}' has no note (only htb/hs/cjca boxes get notes); nothing to append",
+              file=sys.stderr)
+        return 0
+    else:
+        die(f"$PLATFORM must be HTB, HS, CJCA or WEB (got '{plat}')")
+
+    opts = parse_args(argv)
+    if not (opts["texts"] or opts["files"] or opts["cmds"] or opts["lastcnt"] > 0):
+        die("usage: n [-t section] <text words...> | n answer <flag> | n -f <file> | n -c <cmd> | n --last[=N] <comment...>")
+
+    sect = ""
+    if opts["sect"]:
+        sect = SECTIONS.get(opts["sect"].lower(), "")
+        if not sect:
+            die(f"unknown -t '{opts['sect']}' (recon|findings|foothold|privesc|notes|flags)")
+    else:
+        sect = stage_section(box)
+
+    fname = None
+    if os.path.isdir(fold):
+        rx = re.compile(pat, re.IGNORECASE)
+        for f in sorted(os.listdir(fold)):
+            if rx.search(f):
+                fname = f
+                break
+    if not fname:
+        die(f"no note for '{box}' in {fold}; run newbox first?")
+    note = os.path.join(fold, fname)
+
+    ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+    payload = build_payload(opts, ts)
+    if not payload.strip():
+        die("nothing to append")
+    insert(note, payload, sect)
+    print(f"n: appended to {note}")
+    embed_clipboard(note, sect, box, obsidian)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

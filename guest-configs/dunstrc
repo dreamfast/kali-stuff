@@ -1,0 +1,55 @@
+# dunst 1.13 · dexpota/amber palette · 2026-10-02
+# Frosted notifications: own alpha + picom blur behind (window_type
+# 'notification' rule in picom.conf). Restart after edits:
+#   pkill dunst; DISPLAY=:0 nohup dunst >/dev/null 2>&1 &
+[global]
+    monitor = 0
+    follow = mouse
+    origin = top-right
+    offset = 10x44
+    notification_limit = 4
+    width = 340
+    height = 120
+    scale = 0
+    transparency = 0.15
+    corner_radius = 12
+    frame_width = 2
+    frame_color = "#cc8a3e"
+    separator_color = frame
+    sort = yes
+    idle_threshold = 120
+    font = monospace 10.5
+    line_height = 2
+    markup = full
+    format = "<b>%s</b>\n%b"
+    alignment = left
+    vertical_alignment = center
+    word_wrap = yes
+    ellipsize = middle
+    ignore_newline = no
+    stack_duplicates = true
+    show_indicators = yes
+    icon_position = left
+    max_icon_size = 28
+    enable_recursive_icon_lookup = true
+    icon_theme = Adwaita
+    sticky_history = no
+    history_length = 20
+    timeout = 5
+
+[urgency_low]
+    background = "#181c27"
+    foreground = "#ada37a"
+    frame_color = "#566d8c"
+    timeout = 4
+
+[urgency_normal]
+    background = "#181c27"
+    foreground = "#f3dab1"
+    frame_color = "#cc8a3e"
+
+[urgency_critical]
+    background = "#2b1216"
+    foreground = "#f3f3f3"
+    frame_color = "#d33060"
+    timeout = 0
