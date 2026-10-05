@@ -308,10 +308,12 @@ cd "$(dirname "$0")/.." || exit 1
 
 # TCP recon: rustscan discovers open ports (seconds), then nmap -sV -sC runs
 # ONLY on those ports (rustscan's `--` passthrough pipes them automatically).
+# TUNED: --tries 2 -b 500 — rustscan defaults (1 try, batch 1000) silently
+# declare ports closed on slow/lossy targets (lost hours to a missed port once).
 # No rustscan? falls back to nmap -p- full range with -Pn retry.
 if command -v rustscan >/dev/null 2>&1; then
   echo "» [autoscan] rustscan full-range TCP discovery; nmap -sV -sC runs ON the open ports via rustscan's -- passthrough: $IP"
-  rustscan -a "$IP" -r 1-65535 -t 3000 --ulimit 5000 --no-banner -- \
+  rustscan -a "$IP" -r 1-65535 -t 3000 --tries 2 -b 500 --ulimit 5000 --no-banner -- \
     -sV -sC -Pn -vvv --open -oA recon/scan 2>&1 | tee recon/rustscan.txt
 else
   echo "» [autoscan] TCP recon (no rustscan; nmap -p-): nmap -vvv -Pn -T4 --min-rate 1000 --max-retries 2 -sV -sC -p- --open $IP"

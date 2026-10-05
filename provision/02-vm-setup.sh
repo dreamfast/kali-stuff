@@ -168,7 +168,7 @@ META_PKGS=(kali-tools-web kali-tools-forensics kali-tools-crypto-stego kali-tool
 TGT_PKGS=(gdb gdb-multiarch gdbserver strace ltrace valgrind patchelf musl-tools libc6-dbg
   python3-pwntools python3-ropgadget python3-z3 python3-gmpy2 python3-unicorn python3-pycryptodome
   gef ghidra rizin naabu katana dnsx dalfox wine mimikatz hcxtools dcfldd foremost steghide cabextract
-  golang aria2 lftp ligolo-ng)
+  golang aria2 lftp ligolo-ng penelope python3-pyftpdlib)
 WANT=()
 for p in "${META_PKGS[@]}" "${TGT_PKGS[@]}"; do have_pkg "$p" || WANT+=("$p"); done
 if [ "${#WANT[@]}" -gt 0 ]; then
@@ -236,7 +236,7 @@ log "verification"
 for t in bloodhound neo4j kerbrute chisel rustscan subfinder gohttpserver \
          certipy ldapdomaindump patator sshuttle \
          gdb gdb-multiarch strace valgrind patchelf ghidra analyzeHeadless wine \
-         naabu katana dnsx dalfox jarm uncover cloudflared rclone vol.py golang; do
+         naabu katana dnsx dalfox jarm uncover cloudflared rclone vol.py golang penelope python3-pyftpdlib; do
   if need_cmd "$t" || have_pkg "$t"; then echo "  OK  $t"; else echo "  --  $t"; fi
 done
 echo
