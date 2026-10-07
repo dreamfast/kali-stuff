@@ -1,0 +1,32 @@
+#!/bin/sh
+# polybar-vpn: backs the polybar [module/vpn] chip.
+#   status  bar line: tun0 IPv4 in green when the lab VPN is up,
+#           dim "VPN off" otherwise (same output the module used to inline)
+#   copy    the module's click-left: put the tun0 IP on the X clipboard and
+#           confirm via dunst — or complain when the VPN is down.
+# Kept dumb on purpose: no VPN-state caching, re-derived on every call
+# (interval=3 on the bar side; a click is rare).
+IP=$(ip -4 addr show tun0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1)
+
+case "${1:-status}" in
+status)
+    if [ -n "$IP" ]; then
+        echo "%{F#7ec699}VPN $IP"
+    else
+        echo "%{F#555555}VPN off"
+    fi
+    ;;
+copy)
+    if [ -n "$IP" ]; then
+        # xclip forks to own the selection; feed it and don't wait on it
+        printf '%s' "$IP" | xclip -selection clipboard -i 2>/dev/null &
+        notify-send -u low -t 1500 "vpn" "copied $IP" 2>/dev/null &
+    else
+        notify-send -u low -t 1500 "vpn" "no tun0 — VPN down, nothing to copy" 2>/dev/null &
+    fi
+    ;;
+*)
+    echo "usage: polybar-vpn [status|copy]" >&2
+    exit 1
+    ;;
+esac

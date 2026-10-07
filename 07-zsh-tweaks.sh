@@ -237,9 +237,11 @@ echo "zsh tweaks applied. Live in a NEW shell (or: source ~/.zshrc)"
 EOF
 
 # ------------------------------------------------------------- helper pushes
-for b in box n nhosts polybar-target wrec pane-cmd; do
+for b in box n nhosts polybar-target polybar-vpn wrec pane-cmd; do
   kssh "cat > ~/.local/bin/$b && chmod 755 ~/.local/bin/$b" < "guest-configs/$b"
 done
+# fresh-start hygiene script lives in HOME per user preference, not on PATH
+kssh "cat > ~/clean.sh && chmod 755 ~/clean.sh" < guest-configs/clean.sh
 # box was newbox until 2026-10-02; retire the old name (fresh-snapshot policy)
 kssh 'rm -f ~/.local/bin/newbox' >/dev/null 2>&1 || true
 kssh "mkdir -p ~/.local/share && cat > ~/.local/share/ctf-zsh-funcs.zsh" < guest-configs/ctf-zsh-funcs.zsh

@@ -12,7 +12,7 @@ need_cmd() { command -v "$1" >/dev/null 2>&1; }
 have_pkg() { dpkg -s "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------- apt
-APT_PKGS=(rlwrap htop p7zip-full sshuttle mate-polkit dunst)
+APT_PKGS=(rlwrap htop p7zip-full sshuttle mate-polkit dunst jq)
 APT_WANT=()
 for p in "${APT_PKGS[@]}"; do have_pkg "$p" || APT_WANT+=("$p"); done
 if [ "${#APT_WANT[@]}" -gt 0 ]; then

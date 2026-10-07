@@ -12,7 +12,7 @@ need_cmd() { command -v "$1" >/dev/null 2>&1; }
 have_pkg() { dpkg -s "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------- apt
-APT_PKGS=(rlwrap htop p7zip-full sshuttle mate-polkit dunst)
+APT_PKGS=(rlwrap htop p7zip-full sshuttle mate-polkit dunst jq)
 APT_WANT=()
 for p in "${APT_PKGS[@]}"; do have_pkg "$p" || APT_WANT+=("$p"); done
 if [ "${#APT_WANT[@]}" -gt 0 ]; then
@@ -165,7 +165,8 @@ log "kali-tools metapackages (2026 names) + pwn/forensics/reverse targets"
 META_PKGS=(kali-tools-web kali-tools-passwords kali-tools-information-gathering)
 # python3-keystone is NOT apt-installable (eventlet chain Breaks python3-trio) → pip keystone-engine
 TGT_PKGS=(gdb strace ltrace patchelf python3-pwntools python3-pycryptodome
-  hcxtools dcfldd foremost steghide cabextract golang aria2 lftp ligolo-ng)
+  hcxtools dcfldd foremost steghide cabextract golang aria2 lftp ligolo-ng
+  penelope python3-pyftpdlib)
 WANT=()
 for p in "${META_PKGS[@]}" "${TGT_PKGS[@]}"; do have_pkg "$p" || WANT+=("$p"); done
 if [ "${#WANT[@]}" -gt 0 ]; then
@@ -218,7 +219,7 @@ gh_bin uncover projectdiscovery/uncover 'uncover_.*linux_amd64\.zip'
 log "verification"
 for t in bloodhound neo4j kerbrute chisel rustscan subfinder gohttpserver \
          certipy ldapdomaindump patator sshuttle \
-         gdb strace patchelf jarm uncover cloudflared rclone golang; do
+         gdb strace patchelf jarm uncover cloudflared rclone golang penelope python3-pyftpdlib; do
   if need_cmd "$t" || have_pkg "$t"; then echo "  OK  $t"; else echo "  --  $t"; fi
 done
 echo
