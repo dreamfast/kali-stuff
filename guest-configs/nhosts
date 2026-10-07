@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# nhosts: append this box's discovered domains to /etc/hosts (sudo).
+# nhosts: append this box's discovered domains to /etc/hosts (sudo), deduped,
+# marked '# box:', logged to the note via `n` when $PLATFORM is set.
 # usage: nhosts [file]  (default recon/enum4linux.txt; fallback: the
-# smb-os-discovery block in recon/scan.txt.nmap). Parses enum4linux-ng
-# DNS/NetBIOS names or nmap keys, deduped per (IP, name), marked
-# '# newbox:', logged to the note via `n` when $PLATFORM is set.
+# smb-os-discovery block in recon/scan.txt.nmap)
 set -u
 
-[ -n "${BOX:-}" ] || { echo "nhosts: not in a box (no \$BOX); run newbox first" >&2; exit 1; }
+[ -n "${BOX:-}" ] || { echo "nhosts: not in a box (no \$BOX); run box first" >&2; exit 1; }
 ip=${IP:-}
 [ -n "$ip" ] || { echo "nhosts: no \$IP in this box (set it in .envrc, direnv allow, cd in)" >&2; exit 1; }
 [ "$ip" != REPLACE_ME ] || { echo "nhosts: IP is REPLACE_ME; set it in .envrc first" >&2; exit 1; }
@@ -54,7 +53,7 @@ add_name "$fqdn"
 add_name "$nbdom"
 
 if [ -n "$lines" ]; then
-  { echo "# newbox: $BOX $(date +%F)"; echo "$ip $lines"; } | sudo tee -a /etc/hosts >/dev/null
+  { echo "# box: $BOX $(date +%F)"; echo "$ip $lines"; } | sudo tee -a /etc/hosts >/dev/null
   echo "nhosts: /etc/hosts += '$ip $lines'"
   if [ -n "${PLATFORM:-}" ] && command -v n >/dev/null 2>&1; then
     n -t recon "added to /etc/hosts: $ip $lines" || true

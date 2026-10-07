@@ -1,33 +1,29 @@
 #!/usr/bin/env python3
 # =============================================================================
-# n: terminal → Obsidian bridge: append lines/files/command output/termlog
-# excerpts/todo checkboxes (+ done/undo/ls lifecycle) to the CURRENT box's
-# note. Only works inside a box (newbox's .envrc sets $BOX + $PLATFORM).
-#
-# After ANY successful append, an image on the X clipboard is saved to the
-# vault's Attachments/<box>/ and embedded below the new text. Default target
-# section = the box's STAGE (.envrc; `stage <s>` switches it); an explicit
-# -t still overrides, answer/flag still forces ## Flags.
+# n: terminal → Obsidian bridge for the CURRENT box ($BOX/$PLATFORM from the
+# box's .envrc): append text/files/command output/termlog excerpts/todo
+# checkboxes to the box's note (see USAGE for details).
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat as stat_mod
 import subprocess
 import sys
 from datetime import datetime
 
 USAGE = """\
 n: terminal → Obsidian bridge, append to the CURRENT box's note.
-Run inside a box (newbox sets $BOX/$PLATFORM via direnv).
+Run inside a box (`box` sets $BOX/$PLATFORM via direnv).
 
 FORM
   n [options] [words ...]      bare words = ONE note line (no quoting needed)
 
 OPTIONS
   -t SECTION   target section: recon | findings | foothold | privesc |
-               notes | flags  (one -t per call, applies to the whole payload;
-               a missing section is created as ## Title at the end).
+               notes | todo | flags  (one -t per call, applies to the whole
+               payload; a missing section is created as ## Title at the end).
                Default: the box's current STAGE (.envrc; starts at recon,
                switch with `stage <s>`), or ## Notes for stage-less boxes.
   -f FILE      append FILE as a fenced block (repeatable; --file=FILE too;
@@ -80,7 +76,7 @@ EXAMPLES
   n -d done 2                     # check off the 2nd open todo
   n answer THU{a1b2c3}
 
-LANDING (same lookup as newbox; note must exist; run newbox first)
+LANDING (same lookup as `box`; note must exist; run `box` first)
   htb  → 04 - HTB Boxes/NN - <Box>.md
   hs   → 12 - Hack Smarter/NN - <Box>.md
   cjca → 07 - Certifications/CJCA Exam/Targets/<Box>/<Box>.md
@@ -102,9 +98,7 @@ SECTIONS = {
 # selector forms accepted by -l / --last (shared by parser + extractor)
 LAST_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 # flags that end a -d word run (anything --long ends it too)
-KNOWN_FLAGS = frozenset(("-t", "--type", "-f", "--file", "-c", "--cmd",
-                         "--run", "-l", "--last", "-d", "--todo", "--",
-                         "answer", "flag"))
+KNOWN_FLAGS = frozenset(("-t", "-f", "-c", "-l", "-d", "--"))
 # a markdown checkbox line: `- [ ]` / `- [x]` (any bullet, any indent)
 CHECK_RE = re.compile(r"^(\s*[-*+]\s+\[)([ xX])(\].*)$")
 
@@ -128,9 +122,11 @@ def last_label(lo, hi):
 
 
 def todo_op(words):
-    """A -d word run → (verb, N) lifecycle op, or None when it is plain
-    todo text. `ls` alone lists; `done N`/`undo N` need a 1-based number;
-    anything else after done/undo is a usage error (never silent text)."""
+    """A -d word run → (verb, N) lifecycle op, or None for plain text.
+    `ls` lists; `done N`/`undo N` (1-based); other done/undo words = usage
+    error (never silent text)."""
+    if not words:  # `--todo=` with an empty value
+        die("--todo= needs todo text")
     w0 = words[0].lower()
     if w0 in ("ls", "list"):
         return ("ls", 0) if len(words) == 1 else None  # 'ls the shares' = text
@@ -147,9 +143,9 @@ def die(msg, code=1):
 
 
 def stage_section(box):
-    """Default section from the box's STAGE; the .envrc file is the source
-    of truth (`stage <s>` rewrites it; every pane reads it fresh), $STAGE
-    env only as fallback. Unknown/missing → '' (old ## Notes/## Log)."""
+    """Default section from the box's STAGE: .envrc is the source of truth
+    (`stage <s>` rewrites it; panes read it fresh), $STAGE only as fallback.
+    Unknown/missing → '' (legacy ## Notes/## Log)."""
     stage = ""
     root = os.environ.get("CTFS_ROOT", os.path.expanduser("~/work/ctf"))
     try:
@@ -166,26 +162,46 @@ def stage_section(box):
     return SECTIONS.get(stage.strip().lower(), "")
 
 
+def stdin_is_payload():
+    """True for piped/redirected stdin (FIFO or regular file) — NOT a tty or
+    chardev: kssh hands us /dev/null and that must not trip the pipe
+    auto-detect (hijacked `n answer FLAG` into empty-stdin dies once)."""
+    if sys.stdin.isatty():
+        return False
+    try:
+        mode = os.fstat(0).st_mode
+    except OSError:
+        return False
+    return stat_mod.S_ISFIFO(mode) or stat_mod.S_ISREG(mode)
+
+
 # --------------------------------------------------------------------- args
+def add_file(opts, path):
+    """-f/--file= value: `-` means stdin instead of a real file."""
+    if path == "-":
+        opts["stdin"] = True
+    else:
+        opts["files"].append(path)
+
+
 def parse_args(argv):
     opts = {"files": [], "cmds": [], "texts": [], "todos": [],
             "todo_ops": [], "sect": None, "lastsel": None, "stdin": False}
     args = argv[:]
+    # answer/flag count ONLY as the first token: `n answer THU{...}`; the
+    # same word anywhere else is plain note text
+    if args and args[0] in ("answer", "flag"):
+        opts["sect"] = "flags"
+        args = args[1:]
     while args:
         a = args[0]
         if a in ("-f", "--file"):
             if len(args) < 2:
                 die(f"{a} needs a file argument")
-            if args[1] == "-":
-                opts["stdin"] = True
-            else:
-                opts["files"].append(args[1])
+            add_file(opts, args[1])
             args = args[2:]
         elif a.startswith("--file="):
-            if a[len("--file="):] == "-":
-                opts["stdin"] = True
-            else:
-                opts["files"].append(a[len("--file="):])
+            add_file(opts, a[len("--file="):])
             args = args[1:]
         elif a == "-":
             opts["stdin"] = True; args = args[1:]
@@ -197,14 +213,17 @@ def parse_args(argv):
             opts["cmds"].append(a[len("--cmd="):]); args = args[1:]
         elif a in ("-t", "--type"):
             if len(args) < 2:
-                die(f"{a} needs a section (recon|findings|foothold|privesc|notes|flags)")
+                die(f"{a} needs a section (recon|findings|foothold|privesc|notes|todo|flags)")
             if opts["sect"]:
                 die("-t/--type given more than once")
             opts["sect"] = args[1]; args = args[2:]
         elif a.startswith("--type="):
             if opts["sect"]:
                 die("-t/--type given more than once")
-            opts["sect"] = a[len("--type="):]; args = args[1:]
+            v = a[len("--type="):]
+            if not v:
+                die("--type= needs a section (recon|findings|foothold|privesc|notes|todo|flags)")
+            opts["sect"] = v; args = args[1:]
         elif a in ("-l", "--last"):
             # optional attached selector: the NEXT word, only if it is shaped
             # like N or A-B (a digit-leading comment word needs `--` first)
@@ -241,10 +260,6 @@ def parse_args(argv):
             args = args[1:]
             while args:
                 opts["texts"].append(args[0]); args = args[1:]
-        elif a in ("answer", "flag"):
-            if opts["sect"]:
-                die("answer/flag combined with -t; pick one")
-            opts["sect"] = "flags"; args = args[1:]
         else:
             opts["texts"].append(a); args = args[1:]
     return opts
@@ -264,7 +279,7 @@ def strip_ansi(s):
 
 
 def cap(text):
-    """Cap a payload body at MAX_LINES lines / MAX_BYTES bytes."""
+    """Cap a payload body at MAX_LINES lines / MAX_BYTES characters."""
     lines = text.split("\n")[:MAX_LINES]
     return "\n".join(lines)[:MAX_BYTES]
 
@@ -296,7 +311,7 @@ def build_payload(opts, ts):
         with open(f, "rb") as fh:
             raw = fh.read()
         body = cap(strip_ansi(raw.decode("utf-8", "replace")).replace("\r", ""))
-        more = " _(truncated)_" if len(raw.decode('utf-8', 'replace')) > MAX_BYTES \
+        more = " _(truncated)_" if len(raw) > MAX_BYTES \
             or raw.count(b"\n") + 1 > MAX_LINES else ""
         parts.append(f"- {ts}; dumped: {label}{more}\n\n```\n{body}\n```\n\n")
 
@@ -304,7 +319,7 @@ def build_payload(opts, ts):
         proc = subprocess.run(c, shell=True, check=False,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         rc = proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
-        body = cap(strip_ansi(proc.stdout.decode("utf-8", "replace")))
+        body = cap(strip_ansi(proc.stdout.decode("utf-8", "replace")).replace("\r", ""))
         more = f" _(exit {rc})_" if rc != 0 else ""
         parts.append(f"- {ts}; ran: `{c}`{more}\n\n```\n{body}\n```\n\n")
 
@@ -321,9 +336,9 @@ def build_payload(opts, ts):
 # ------------------------------------------------------------------- --last
 # The termlog trail separator, as printed by _nb_cmd_sep (ctf-zsh-funcs):
 #   ──▶ [user@host YYYY-MM-DD HH:MM:SS] <command line>
-# ONLY this exact shape parses as a command boundary: `» [autoscan] ...`
-# banners, phantom empty lines and any other bracketed prefix don't match.
-# (Legacy `── [` recordings, pre-▶ sentinel, are intentionally unsupported.)
+# ONLY this exact shape parses as a command boundary (autoscan banners and
+# other bracketed prefixes don't match); legacy `── [` recordings are
+# intentionally unsupported.
 SEP_RE = re.compile(r"^──▶ \[\S+@\S+ \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] ?(.*)$")
 SELF_FLAG_RE = re.compile(r"(^|\s)(--last(=\d+(?:-\d+)?)?|-l)(\s|$)")
 
@@ -332,7 +347,9 @@ def is_self(cmd):
     """Any && || ; | segment that is an `n` invocation with -l/--last counts;
     `cd ~/work/ctf/x && n -l` is still THIS call, not a previous command."""
     for seg in re.split(r"&&|\|\||;|\||\n", cmd):
-        seg = re.sub(r"^(\w+=\S+\s+)+", "", seg.strip())  # env prefixes
+        seg = re.sub(r'^(\w+=("([^"\\]|\\.)*"|\S+)\s+)+', "",
+                     seg.strip())  # env prefixes (quoted values too)
+        seg = re.sub(r"^(sudo|time|nohup|env)\s+", "", seg)  # runner prefixes
         toks = seg.split()
         if toks and (toks[0] == "n" or toks[0].endswith("/n")) and SELF_FLAG_RE.search(seg):
             return True
@@ -383,16 +400,18 @@ def find_recording(pane):
             for f in os.listdir(sdir):
                 if f.endswith("_" + pane):
                     p = os.path.join(sdir, f)
-                    st = os.stat(p)
+                    try:
+                        st = os.stat(p)
+                    except OSError:
+                        continue  # prune race: recording vanished mid-scan
                     if best is None or st.st_mtime > best[1]:
                         best = (p, st.st_mtime)
     return best[0] if best else None
 
 
 def extract_last(lo, hi):
-    """Termlog excerpt for commands lo..hi back (1 = previous). The block
-    runs from the hi-back separator to the (lo-1)-back separator — or, for
-    lo=1, to this very `n -l` call's own separator."""
+    """Termlog excerpt for commands lo..hi back (1 = previous): from the
+    hi-back separator to the (lo-1)-back one (lo=1: this call's own)."""
     pane = os.environ.get("TMUX_PANE", "")
     if not pane:
         die("-l needs a tmux pane recording (no $TMUX_PANE)")
@@ -424,16 +443,14 @@ def extract_last(lo, hi):
         die(f"-l: only {len(real)} command(s) recorded in this pane (need {hi})")
     start = real[-hi][0]
     # cut at the separator of the command (lo-1) back when lo > 1, else at
-    # the first self-call separator; from there on is the typed echo/output
-    # of THIS invocation (+ any earlier n -l output)
+    # the first self-call separator (from there = THIS call's typed echo)
     if lo == 1:
         end = min(self_starts) if self_starts else len(lines)
     else:
         end = real[-(lo - 1)][0]
     blk = lines[start:end]
 
-    # trim the trailing prompt + the typed echo of the next command (for
-    # lo=1: of this `n -l` call)
+    # trim the trailing prompt + typed echo of the next command (lo=1: this call)
     budget = 12
     while blk and budget > 0:
         s = blk[-1].strip()
@@ -458,9 +475,9 @@ PIPE_TAIL_RE = re.compile(r"\s*(\||&&|;)\s*(?:\w+=\S+\s+)*n(?:\s+\S+)*\s*$")
 
 
 def last_cmdline():
-    """Best-effort command line of THIS pane's most recent trail entry —
-    when `cmd | n` runs, that entry IS the pipeline, preexec fires for the
-    whole line. '' on any failure: the label is cosmetic, never fatal."""
+    """Best-effort cmdline of this pane's latest trail entry (for `cmd | n`
+    that IS the pipeline: preexec fires for the whole line). '' on failure:
+    the label is cosmetic, never fatal."""
     try:
         pane = os.environ.get("TMUX_PANE", "")
         if not pane:
@@ -489,9 +506,9 @@ def pipe_label(cmd):
 
 # ------------------------------------------------------------------- insert
 def section_bounds(lines, sect):
-    """(start, end) line span of the LAST `## <sect>` section — end = the
-    next top-level header/hr, fenced blocks respected — or None. sect=None
-    → the legacy ## Notes/## Log fallback (shared by insert + todo ops)."""
+    """(start, end) span of the LAST `## <sect>` heading — end = next
+    top-level header/hr, fenced blocks respected — or None; sect=None →
+    the legacy ## Notes/## Log fallback (shared by insert + todo ops)."""
     if sect:
         pat = re.compile(r"^##\s+" + re.escape(sect) + r"\s*$", re.IGNORECASE)
         idxs = [k for k, l in enumerate(lines) if pat.match(l.strip())]
@@ -540,9 +557,8 @@ def insert(note, payload, sect):
 
 # ---------------------------------------------------------------- todo ops
 def todo_items(lines, b):
-    """(line_no, is_done, text) for each checkbox line in section span b,
-    skipping fenced blocks (a `- [ ]` inside a dumped file is content,
-    not a todo)."""
+    """(line_no, is_done, text) for each checkbox in span b, skipping fenced
+    blocks (a `- [ ]` inside a dumped file is content, not a todo)."""
     out, fence = [], False
     for k in range(b[0] + 1, b[1]):
         ls = lines[k].lstrip()
@@ -581,9 +597,9 @@ def todo_list(note, sect):
 
 
 def todo_flip(note, sect, verb, num):
-    """`done N` checks the Nth OPEN checkbox, `undo N` reopens the Nth
-    done one — numbering per-group, file order, exactly as `n -d ls`
-    shows it. Only the [x] marker moves; the line text stays untouched."""
+    """`done N` checks the Nth OPEN checkbox, `undo N` reopens the Nth done
+    one (per-group numbering, exactly as `n -d ls` shows); only the [x]
+    marker moves, the text stays untouched."""
     with open(note, encoding="utf-8") as fh:
         lines = fh.read().splitlines(keepends=True)
     b = section_bounds(lines, sect)
@@ -702,9 +718,8 @@ def embed_clipboard(note, sect, box, obsidian):
     clip_mark(note, digest)
     print(f"n: + screenshot {name}")
     # consume: the image is in the note now; clear the clipboard so a stale
-    # screenshot doesn't leak into later notes (vdagent shares this slot
-    # with the host; if the image is still here, nothing else was copied
-    # since, so clearing it loses nothing). Best-effort.
+    # shot doesn't leak into later notes (vdagent shares this slot with the
+    # host). Best-effort.
     try:
         subprocess.run(["xclip", "-selection", "clipboard", "-i"],
                        input=b"", check=False, stdout=subprocess.DEVNULL,
@@ -722,7 +737,7 @@ def main():
 
     box = os.environ.get("BOX", "")
     if not box:
-        die("not in a box (no $BOX); run newbox first")
+        die("not in a box (no $BOX); run `box` first")
     if not argv and sys.stdin.isatty():
         die("usage: n [-t section] <text words...> | n answer <flag> | n -f <file> ... | n -c <cmd> ... | n -d <todo> | cmd | n [-]")
 
@@ -744,11 +759,11 @@ def main():
         die(f"$PLATFORM must be HTB, HS, CJCA or WEB (got '{plat}')")
 
     opts = parse_args(argv)
-    # `cmd | n [comment]`: with no other payload, a non-tty stdin IS the
-    # payload (an explicit `-` forces stdin even alongside other options)
+    # `cmd | n [comment]`: with no other payload, piped/redirected stdin IS
+    # the payload (an explicit `-` forces stdin even alongside other options)
     if (not opts["stdin"] and not opts["files"] and not opts["cmds"]
             and opts["lastsel"] is None and not opts["todos"]
-            and not opts["todo_ops"] and not sys.stdin.isatty()):
+            and not opts["todo_ops"] and stdin_is_payload()):
         opts["stdin"] = True
     if not (opts["texts"] or opts["files"] or opts["cmds"] or opts["todos"]
             or opts["todo_ops"] or opts["stdin"] or opts["lastsel"] is not None):
@@ -758,7 +773,7 @@ def main():
     if opts["sect"]:
         sect = SECTIONS.get(opts["sect"].lower(), "")
         if not sect:
-            die(f"unknown -t '{opts['sect']}' (recon|findings|foothold|privesc|notes|flags)")
+            die(f"unknown -t '{opts['sect']}' (recon|findings|foothold|privesc|notes|todo|flags)")
     else:
         sect = "Todo" if (opts["todos"] or opts["todo_ops"]) else stage_section(box)
 
@@ -770,7 +785,7 @@ def main():
                 fname = f
                 break
     if not fname:
-        die(f"no note for '{box}' in {fold}; run newbox first?")
+        die(f"no note for '{box}' in {fold}; run `box` first?")
     note = os.path.join(fold, fname)
 
     ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")

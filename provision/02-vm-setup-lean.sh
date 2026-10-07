@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 02-vm-setup.sh: make the Kali VM CTF/OSCP-ready. Run INSIDE the VM:
-#   kssh 'sudo bash /tmp/02-vm-setup.sh'   (after: kscp 02-vm-setup.sh kali:/tmp/)
+# 02-vm-setup-lean.sh: make the Kali VM CTF/OSCP-ready. Run INSIDE the VM (push
+# from the repo root, to ~ — NOT guest /tmp, which is tmpfs):
+#   scp -F .ssh/config provision/02-vm-setup-lean.sh kali: && kssh 'sudo bash ~/02-vm-setup-lean.sh'
 # Idempotent: safe to re-run. Installs whatever is missing, skips the rest.
 
 set -uo pipefail
@@ -136,7 +137,8 @@ sudo mkdir -p "$WIN"
 sudo wget -q -O "$WIN/Rubeus.exe" \
   https://github.com/r3motecontrol/Ghostpack-CompiledBinaries/raw/master/Rubeus.exe || true
 # mimikatz latest tag is 2.2.0-20220919, asset mimikatz_trunk.zip
-if [ ! -f "$WIN/mimikatz.x86_64/" ]; then
+# (zip has NO top-level wrapper dir: unzip -d $WIN yields $WIN/{x64,Win32}/mimikatz.exe)
+if [ ! -f "$WIN/x64/mimikatz.exe" ]; then
   url="$(gh_asset gentilkiwi/mimikatz 'mimikatz_trunk\.zip' || true)"
   [ -n "$url" ] || url="https://github.com/gentilkiwi/mimikatz/releases/download/2.2.0-20220919/mimikatz_trunk.zip"
   curl -fsSL -o /tmp/mimi.zip "$url" && sudo unzip -o -q /tmp/mimi.zip -d "$WIN"

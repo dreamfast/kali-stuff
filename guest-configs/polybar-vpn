@@ -1,11 +1,8 @@
 #!/bin/sh
 # polybar-vpn: backs the polybar [module/vpn] chip.
-#   status  bar line: tun0 IPv4 in green when the lab VPN is up,
-#           dim "VPN off" otherwise (same output the module used to inline)
-#   copy    the module's click-left: put the tun0 IP on the X clipboard and
-#           confirm via dunst — or complain when the VPN is down.
-# Kept dumb on purpose: no VPN-state caching, re-derived on every call
-# (interval=3 on the bar side; a click is rare).
+#   status  bar line: tun0 IPv4 green when up, dim "VPN off" otherwise
+#   copy    click-left: tun0 IP → X clipboard + dunst confirm (or complain)
+# Dumb on purpose: no state caching, re-derived every call (bar polls at 3s).
 IP=$(ip -4 addr show tun0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1)
 
 case "${1:-status}" in

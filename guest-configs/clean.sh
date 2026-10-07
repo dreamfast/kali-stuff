@@ -22,7 +22,7 @@ for a in "$@"; do
         --dry-run) DRY=1 ;;
         --browser) BROWSER=1 ;;
         --yes|-y)  YES=1 ;;
-        -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
         *) echo "clean.sh: unknown flag '$a' (--browser --dry-run --yes)" >&2; exit 1 ;;
     esac
 done
@@ -53,7 +53,7 @@ echo "clean: shell + tool histories"
 zap_file ~/.zsh_history ~/.bash_history ~/.python_history ~/.sqlite_history \
           ~/.gdb_history ~/.mysql_history ~/.psql_history ~/.lesshst \
           ~/.viminfo ~/.node_repl_history
-zap_dir  ~/._rlwrap
+zap_dir  ~/.rlwrap
 
 echo "clean: metasploit + tmux-resurrect artifacts"
 zap_dir  ~/.msf4/history ~/.msf4/loot ~/.tmux/resurrect
@@ -105,8 +105,7 @@ if [ "$BROWSER" = 1 ]; then
                 found=1
                 if [ -n "$DRY" ]; then echo "  = $d (history rows; keep bookmarks)"; continue; fi
                 # row-delete, NOT file-delete: places.sqlite also holds the
-                # bookmarks. Each statement alone: older profiles may miss a
-                # table, one failure must not abort the rest.
+                # bookmarks; each statement alone (profiles may miss tables)
                 for q in 'DELETE FROM moz_historyvisits;' \
                           'DELETE FROM moz_places WHERE id NOT IN (SELECT COALESCE(fk,-1) FROM moz_bookmarks);' \
                           'DELETE FROM moz_inputhistory WHERE place_id NOT IN (SELECT id FROM moz_places);' \

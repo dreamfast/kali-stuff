@@ -2,22 +2,15 @@
 """box: scaffold + open a CTF/lab workspace.
 
 One box = one dir + direnv env + Obsidian note + tmux session (3 panes,
-termlogged) + auto-recon flags. Ported from bash 2026-10-02 (behavior-
-identical; interface byte-compatible: bare name / -b, same flags, .box
-marker, same messages) so future lifecycle subcommands (archive/clean/
-rename) have room to grow.
-
-usage:
-  box                  list ACTIVE box sessions (attached/detached)
-  box -a               list ALL boxes, newest first (creation date)
-  box <name> [flags]   scaffold NEW box, or re-enter + ATTACH existing
-Auto-recon flags fire only when the session is CREATED with a real IP; a
-session created without one is killed + recreated when re-run with -i+flags.
+termlogged) + auto-recon flags. Auto-recon fires only at session creation
+with a real IP; an IP-less session is killed + recreated when re-run with
+-i + flags (see -h for usage).
 """
 
 from __future__ import annotations
 
 import argparse
+import glob
 import os
 import re
 import subprocess
@@ -34,14 +27,19 @@ PLATFORMS = {  # cli flag -> (vault folder, PLATFORM env, index file, index sect
     "hs": ("12 - Hack Smarter", "Hack Smarter", "Hack Smarter Index.md", "Machines"),
     "cjca": ("07 - Certifications/CJCA Exam/Targets", "CJCA", "", ""),
 }
+PLATFORM_ENV = {"htb": "HTB", "hs": "HS", "cjca": "CJCA"}  # cli flag -> PLATFORM env value in .envrc
 
 
 def run(*cmd: str, devnull: bool = False) -> subprocess.CompletedProcess:
-    """Run a command, never raise. devnull=True silences like bash's `2>/dev/null`
-    (stdout is None then — only for fire-and-forget calls)."""
-    if devnull:
-        return subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return subprocess.run(cmd, check=False, capture_output=True, text=True)
+    """Run a command, never raise; a missing binary returns a 127 stub
+    (returncode guards keep working). devnull=True mutes BOTH streams
+    (stdout is None then — fire-and-forget calls only)."""
+    try:
+        if devnull:
+            return subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args=list(cmd), returncode=127)
 
 
 def tmux(*args: str, quiet: bool = False) -> subprocess.CompletedProcess:
@@ -54,9 +52,13 @@ def say(msg: str) -> None:
 
 # --------------------------------------------------------------------- listing
 
-def envrc_field(envrc: Path, key: str) -> str:
-    m = re.search(rf"^(?:export )?{key}=(.*)$", envrc.read_text(), re.MULTILINE)
+def envrc_value(text: str, key: str) -> str:
+    m = re.search(rf"^(?:export )?{key}=(.*)$", text, re.MULTILINE)
     return m.group(1).strip() if m else ""
+
+
+def envrc_field(envrc: Path, key: str) -> str:
+    return envrc_value(envrc.read_text(), key)
 
 
 def list_boxes(mode: str) -> int:
@@ -87,8 +89,9 @@ def list_boxes(mode: str) -> int:
             created = marker.stat().st_mtime
         except OSError:
             created = 0
-        rows.append((created, name, envrc_field(envrc, "IP") or "-",
-                     envrc_field(envrc, "PLATFORM") or "-", envrc_field(envrc, "STAGE") or "-", state))
+        env = envrc.read_text()  # one read; IP/PLATFORM/STAGE all come from it
+        rows.append((created, name, envrc_value(env, "IP") or "-",
+                     envrc_value(env, "PLATFORM") or "-", envrc_value(env, "STAGE") or "-", state))
     if not rows:
         print("no active box sessions (box -a lists all boxes)" if mode == "active"
               else f"no boxes in {ROOT}")
@@ -189,11 +192,9 @@ def create_or_recreate_note(name: str, plat: str, target: str, recreated: bool =
     """(path, created?) — creates the note if missing (scaffold or re-enter paths)."""
     found = note_path_for(name, plat)
     if found is not None:
-        if recreated:
-            return found, False  # exists: re-enter path only reports when MISSING
         return found, False
     path = next_note_path(name, plat)
-    if path.parent.is_dir() or plat == "cjca":
+    if path.parent.is_dir():  # next_note_path already mkdirs (cjca machine folder)
         write_note(path, title_of(name), plat, target, recreated=recreated)
         say(("note was missing; recreated: " if recreated else "note created: ") + str(path))
         return path, True
@@ -228,19 +229,21 @@ def refresh_box_agents_md(bdir: Path, target: str, notepath: Path | None) -> Non
 
 # ------------------------------------------------------------- scaffolding
 
-def scaffold(bdir: Path, name: str, target: str, plat: str) -> Path | None:
-    (bdir / "recon").mkdir(parents=True, exist_ok=True)
-    platform = {"htb": "HTB", "hs": "HS", "cjca": "CJCA"}.get(plat, "")
-    envrc = bdir / ".envrc"
-    envrc.write_text(f"""# {name}: per-box environment (direnv: loads on cd in, unloads on cd out)
+def write_envrc(bdir: Path, name: str, target: str, platform: str) -> None:
+    (bdir / ".envrc").write_text(f"""# {name}: per-box environment (direnv: loads on cd in, unloads on cd out)
 # Edited this file? Run: direnv allow {bdir}
 export BOX={name}
 export IP={target or 'REPLACE_ME'}
 export PLATFORM={platform}
 export STAGE=recon
 """)
-    if run("direnv", "allow", str(bdir), devnull=True).returncode != 0:
-        pass  # pre-approve the fresh .envrc; absence of direnv is fine
+
+
+def scaffold(bdir: Path, name: str, target: str, plat: str) -> Path | None:
+    (bdir / "recon").mkdir(parents=True, exist_ok=True)
+    platform = PLATFORM_ENV.get(plat, "")
+    write_envrc(bdir, name, target, platform)
+    run("direnv", "allow", str(bdir), devnull=True)  # pre-approve the fresh .envrc; missing direnv is fine (127 stub)
     (bdir / ".box").write_text(f"CREATED_IP={target or 'none'}\n")
     note = None
     if plat:
@@ -266,7 +269,11 @@ def reenter(bdir: Path, name: str, target: str, plat: str) -> None:
             notepath = found
     # sync a newly-learned IP into .envrc (panes pick it up via the direnv hook)
     envrc = bdir / ".envrc"
-    oldip = envrc_field(envrc, "IP") if envrc.is_file() else ""
+    if not envrc.is_file():  # deleted by hand: regen the same fresh .envrc scaffold writes
+        write_envrc(bdir, name, target, PLATFORM_ENV.get(plat, ""))
+        run("direnv", "allow", str(bdir), devnull=True)
+        say(".envrc was missing; regenerated")
+    oldip = envrc_field(envrc, "IP")
     if target and target != "REPLACE_ME" and oldip != target:
         envrc.write_text(re.sub(r"^export IP=.*", f"export IP={target}", envrc.read_text(), flags=re.MULTILINE))
         run("direnv", "allow", str(bdir), devnull=True)
@@ -283,16 +290,15 @@ def reenter(bdir: Path, name: str, target: str, plat: str) -> None:
 # ------------------------------------------------------------- tmux session
 
 def wait_pane_ready(pane_target: str) -> None:
-    """Poll the pane's zsh ready marker (/tmp/nb-pane-ready-<pane>-<pid>, the last
-    .zshrc step): input sent before the first prompt is SILENTLY SWALLOWED on
-    this zsh 5.9.2 build. ~30s budget."""
+    """Poll /tmp/nb-pane-ready-<pane>-<pid> (the pane's LAST .zshrc step)
+    before typing: pre-prompt input is SILENTLY SWALLOWED on this zsh
+    build. ~30s budget."""
     res = tmux("display-message", "-p", "-t", pane_target, "#{pane_id}")
     if res.returncode != 0:
         return
     pane_id = res.stdout.strip()
-    import glob as _glob
     for _ in range(60):
-        if _glob.glob(f"/tmp/nb-pane-ready-{pane_id}-*"):
+        if glob.glob(f"/tmp/nb-pane-ready-{pane_id}-*"):
             time.sleep(0.3)
             return
         time.sleep(0.5)
@@ -391,15 +397,15 @@ def has_session(name: str) -> bool:
 
 
 def open_session(bdir: Path, name: str, target: str, plat: str, doscan: bool, doudp: bool) -> None:
-    # a session created without an IP never ran auto-recon: recreate it when an
-    # IP + auto flags are known now (panes sit idle; termlogs keep the old ones)
-    created_ip, eff_ip = "", ""
+    # an IP-less session never ran auto-recon: recreate it once an IP + auto
+    # flags are known (.envrc is the IP source of truth, not just -i)
+    created_ip = ""
+    eff_ip = envrc_field(bdir / ".envrc", "IP")
     if has_session(name):
         marker = bdir / ".box"
         created_ip = envrc_field(marker, "CREATED_IP") if marker.is_file() else ""
         if not created_ip:  # marker missing (deleted dir / continuum restore)
             created_ip = "none"
-        eff_ip = envrc_field(bdir / ".envrc", "IP")
         if created_ip == "none" and eff_ip and eff_ip != "REPLACE_ME" and (doscan or doudp):
             if os.environ.get("TMUX") and \
                tmux("display-message", "-p", "#{session_name}").stdout.strip() == name:
@@ -423,7 +429,7 @@ def open_session(bdir: Path, name: str, target: str, plat: str, doscan: bool, do
         tmux("select-pane", "-t", left)                               # start focused in left
         say(f"created {name} with 3 panes")
 
-        have_ip = bool(target) and target != "REPLACE_ME"
+        have_ip = bool(target or eff_ip) and (target or eff_ip) != "REPLACE_ME"
         if have_ip and doudp:
             tmux("new-window", "-d", "-t", name, "-n", "udp_scan", "-c", str(bdir))
             tmux("set-option", "-t", f"{name}:udp_scan", "automatic-rename", "off")
@@ -437,7 +443,7 @@ def open_session(bdir: Path, name: str, target: str, plat: str, doscan: bool, do
                 sc = bdir / "recon" / "autoscan.sh"
                 sc.write_text(AUTOSCAN_TCP)
                 sc.chmod(0o755)
-                say(f"auto-recon of {target} starting in the right-top pane (zsh recon/autoscan.sh: full nmap -p- -sV -sC, -Pn retry if the host looks down, +whatweb if 80/443, auto-tabs on detection)")
+                say(f"auto-recon of {target or eff_ip} starting in the right-top pane (zsh recon/autoscan.sh: full nmap -p- -sV -sC, -Pn retry if the host looks down, +whatweb if 80/443, auto-tabs on detection)")
                 wait_pane_ready(right)
                 tmux("send-keys", "-t", right, "zsh recon/autoscan.sh", "Enter")
             if doudp:
@@ -445,12 +451,14 @@ def open_session(bdir: Path, name: str, target: str, plat: str, doscan: bool, do
                 sc = bdir / "recon" / "autoscan-udp.sh"
                 sc.write_text(AUTOSCAN_UDP)
                 sc.chmod(0o755)
-                say(f"udp scan of {target} starting in the udp_scan tab (zsh recon/autoscan-udp.sh: top-100 UDP, -Pn retry if the host looks down)")
+                say(f"udp scan of {target or eff_ip} starting in the udp_scan tab (zsh recon/autoscan-udp.sh: top-100 UDP, -Pn retry if the host looks down)")
                 wait_pane_ready(f"{name}:udp_scan")
                 tmux("send-keys", "-t", f"{name}:udp_scan", "zsh recon/autoscan-udp.sh", "Enter")
     else:
         if created_ip == "none" and (doscan or doudp) and (not eff_ip or eff_ip == "REPLACE_ME"):
             say(f"{name} still has no target IP; auto-recon skipped (re-run with -i <ip> once known: the session is recreated and recon starts)")
+        elif doscan or doudp:
+            say(f"auto-recon flags fire only at session creation; {name} keeps its existing panes (re-scan anytime: zsh recon/autoscan.sh)")
 
     if os.environ.get("TMUX"):
         tmux("switch-client", "-t", f"={name}")

@@ -1,23 +1,21 @@
 #!/usr/bin/env bash
 # 07-zsh-tweaks.sh: deploy guest skeletons + shell setup into the running
 # Kali VM (via kssh). Idempotent: marker-guarded rc blocks, md5-guarded
-# config sync (differing live copies are backed up to <file>.bak-<date>).
+# config sync (differing live copies backed up to <file>.bak-<date>).
 # Re-run any time after editing anything in guest-configs/.
 #
 # Covers: zsh rc blocks (history/fzf/zoxide/direnv/extract/kwp), WPSCAN key,
 # /etc/zsh/zshenv blocks (PATH-HEAL/WPSCAN/CTF-FUNCS), the CTF helpers
-# (box n nhosts ctf-zsh-funcs polybar-target wp-rotate),
-# the desktop configs (i3 tmux kitty picom polybar rofi + root-owned
-# lightdm/xorg files) and the pi agent config (guest-configs/pi/ →
-# ~/.pi/agent/: settings/models/mcp/AGENTS, local inference only).
+# (box n nhosts polybar-target polybar-vpn wrec pane-cmd clean.sh
+# ctf-zsh-funcs.zsh), the desktop configs (i3 tmux kitty picom polybar rofi
+# + root-owned lightdm/xorg) and the pi agent config (guest-configs/pi/).
 #
 # Usage:  bash 07-zsh-tweaks.sh    (guest must be RUNNING)
 # Undo:   guest: mv ~/.zshrc.bak-zsh-tweaks ~/.zshrc
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# kssh lives in ~/.local/bin, which non-login shells don't always have on
-# PATH; self-heal before the first guest call instead of dying obscurely.
+# kssh may be missing from PATH in non-login shells; self-heal before use.
 if ! command -v kssh >/dev/null 2>&1 && [ -x "$HOME/.local/bin/kssh" ]; then
   PATH="$HOME/.local/bin:$PATH"
 fi
@@ -37,17 +35,16 @@ if [ -z "${WPSCAN_API_KEY:-}" ]; then
 fi
 
 # ---------------------------------------------------------------- guest part
-# NB: env-prefix on the remote command carries the key into the guest bash;
-# the two key heredocs below are UNquoted so it expands there.
+# NB: the env-prefix carries the key into the guest bash; the two key
+# heredocs below are UNquoted so it expands there.
 kssh "WPSCAN_API_KEY='$WPSCAN_API_KEY' bash -s" <<'EOF'
 set -euo pipefail
 RC=~/.zshrc
 
 [ -f "$RC.bak-zsh-tweaks" ] || cp "$RC" "$RC.bak-zsh-tweaks"
 
-# WPSCAN key in every zsh (rc = interactive, zshenv = panes/scripts).
-# Appended blocks land AFTER the rc's interactive early-exit, but the
-# zshenv copy covers non-interactive shells.
+# WPSCAN key in every zsh: rc (interactive) + zshenv (panes/scripts — the
+# rc blocks land after its interactive early-exit).
 if ! grep -q 'WPSCAN-KEY-START' "$RC"; then
   cat >> "$RC" <<WPSRC
 
@@ -63,9 +60,9 @@ export WPSCAN_API_KEY=$WPSCAN_API_KEY
 # === WPSCAN-KEY-END ===
 WPSENV
 
-# NEWBOX-PANE-READY marker: pane shells write /tmp/nb-pane-ready-<pane>-<pid>
-# as their LAST rc step (only in tmux); box polls for it instead of a
-# blind sleep (this zsh build swallows pre-prompt input).
+# NEWBOX-PANE-READY: pane shells touch /tmp/nb-pane-ready-<pane>-<pid> as
+# their LAST rc step (tmux only); box polls it instead of a blind sleep
+# (this zsh build swallows pre-prompt input).
 if ! grep -q 'NEWBOX-PANE-READY' "$RC"; then
   cat >> "$RC" <<'READY'
 
@@ -88,12 +85,10 @@ if ! grep -q 'PI-BIN-PATH' "$RC"; then
 PIPATH
 fi
 
-# pi rice prompt: EXACT Kali stock twoline (verbatim from /etc/skel/.zshrc
-# configure_prompt) RICED with native zsh parts: ─(BOX · STAGE) link from
-# direnv, vcs_info git segment, RPROMPT with ⨯ exit code + ⚙ jobs + dim
-# clock. Rebuilt every prompt via precmd (documented-safe direct append;
-# .zshrc is interactive-only). SELF-UPDATING: strips any previous version
-# of the block first, so edits here re-deploy cleanly.
+# pi rice prompt: Kali stock twoline riced with native zsh parts (BOX·STAGE
+# link from direnv, vcs_info git segment, RPROMPT exit code + jobs).
+# SELF-UPDATING: the sed strips any previous version of the block first,
+# so edits here re-deploy cleanly.
 sed -i '/PI-RICE-PROMPT (07-zsh-tweaks.sh)/,/PI-RICE-PROMPT-END/d' "$RC"
 cat >> "$RC" <<'RICEP'
 
@@ -109,9 +104,8 @@ zstyle ':vcs_info:git:*' actionformats '%F{#dcde7b} git:(%F{#cc8a3e}%b%F{#d33060
 _pi_rice_prompt() {
   vcs_info
   local sym=㉿ link=""
-  # TRAP: do NOT build this as a nested ${BOX:+...} inside PROMPT — a bare
-  # } inside a ${:+} word (e.g. %F{#hex}) terminates the expansion and the
-  # prompt renders garbage like ─(). Build the link HERE at assign time.
+  # TRAP: no nested ${BOX:+...} inside PROMPT — a bare } in a ${:+} word
+  # (e.g. %F{#hex}) terminates the expansion; build the link HERE instead.
   if [ -n "${BOX:-}" ]; then
     link="─(%F{#cc8a3e}${BOX}"
     [ -n "${STAGE:-}" ] && link="${link}%F{#dcde7b} · ${STAGE}"
@@ -242,7 +236,7 @@ for b in box n nhosts polybar-target polybar-vpn wrec pane-cmd; do
 done
 # fresh-start hygiene script lives in HOME per user preference, not on PATH
 kssh "cat > ~/clean.sh && chmod 755 ~/clean.sh" < guest-configs/clean.sh
-# box was newbox until 2026-10-02; retire the old name (fresh-snapshot policy)
+# retire the pre-rename `newbox` binary name (fresh-snapshot policy)
 kssh 'rm -f ~/.local/bin/newbox' >/dev/null 2>&1 || true
 kssh "mkdir -p ~/.local/share && cat > ~/.local/share/ctf-zsh-funcs.zsh" < guest-configs/ctf-zsh-funcs.zsh
 
@@ -250,17 +244,18 @@ kssh "mkdir -p ~/.local/share && cat > ~/.local/share/ctf-zsh-funcs.zsh" < guest
 if ! kssh "grep -q '^kwp()' ~/.zshrc" >/dev/null 2>&1; then
   kssh "cat >> ~/.zshrc" <<'EOF'
 
-kwp() { [ -n "${1:-}" ] && feh --bg-fill "$1" || wp-rotate; }  # kwp <img> | kwp (random)
+kwp() {  # kwp <img> | kwp (random); if/else so a feh failure doesn't fall through to wp-rotate
+  if [ -n "${1:-}" ]; then feh --bg-fill "$1"; else wp-rotate; fi
+}
 EOF
   echo "07: kwp() added to .zshrc"
 fi
 
 # ------------------------------------------------------------- config sync
-# sync_cfg <guest-dest> <local-source> [tag] [sudo]
-#  - md5-guarded; live copy backed up to <dst>.bak-<date> before overwrite
-#  - tag i3/tmux/polybar re-fires the matching reload after the sync
-#  - sudo=1 writes root-owned targets (no service restarts; those files
-#    apply at next lightdm restart/reboot)
+# sync_cfg <guest-dest> <local-source> [tag] [sudo]: md5-guarded, live copy
+# backed up to <dst>.bak-<date> first; tag i3/tmux/polybar re-fires the
+# matching reload after the sync; sudo=1 writes root-owned targets (they
+# apply at next lightdm restart, no service restarts).
 # NB: remote paths must stay UNQUOTED on the guest side so zsh tilde-expands
 # them (a quoted '~' is literal → files would land in /home/kali/~/)
 render() {  # render <file> > stdout: %%TOKEN%% -> real values (values.sh)
@@ -334,12 +329,14 @@ done
 sync_cfg '/etc/X11/xorg.conf.d/10-virtio.conf'    guest-configs/10-virtio.conf       '' 1
 sync_cfg '/etc/lightdm/lightdm.conf'              guest-configs/lightdm.conf         '' 1
 kssh 'chmod 755 ~/.local/bin/wp-rotate'
+# i3.config execs launch.sh DIRECTLY (no `sh`); a first-create sync leaves it non-executable
+kssh 'chmod 755 ~/.config/polybar/launch.sh'
 
 # re-fire only what actually changed
 if [ "$SYNCED_i3" = 1 ]; then
   # $() must expand on the GUEST; keep single-quoted
   # shellcheck disable=SC2016
-  kssh 'i3-msg -s /run/user/1000/i3/ipc-socket.$(pgrep -x i3 | head -1) reload' 2>/dev/null \
+  kssh 'i3-msg -s /run/user/$(id -u)/i3/ipc-socket.$(pgrep -x i3 | head -1) reload' 2>/dev/null \
     && echo "07: i3 reloaded" || echo "07: (i3 not running; applies at next start)"
 fi
 if [ "$SYNCED_tmux" = 1 ]; then
