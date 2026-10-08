@@ -2,7 +2,7 @@
 # ~/.local/share/ctf-zsh-funcs.zsh, sourced from /etc/zsh/zshenv (every
 # zsh instance: tmux panes, kssh `zsh -c`, scripts).
 #
-#   t            print the current box context (BOX/IP/PLATFORM/STAGE/PWD)
+#   t            print the current box context (BOX/IP/PLATFORM/STAGE/TUN0/PWD)
 #   stage <s>    switch the box's STAGE (rewrites .envrc; `n` targets it)
 #   proxyon      route HTTP(S) through the box's Burp (127.0.0.1:$BURP_PORT)
 #   proxyoff     go direct (unset proxies); use for ssh/smb to the same IP
@@ -110,8 +110,8 @@ stage() {
 
 
 t() {
-  printf 'BOX=%s  IP=%s  PLATFORM=%s  STAGE=%s\n%s\n' \
-    "${BOX:-<none>}" "${IP:-<none>}" "${PLATFORM:-<none>}" "${STAGE:-<none>}" "$PWD"
+  printf 'BOX=%s  IP=%s  PLATFORM=%s  STAGE=%s  TUN0=%s\n%s\n' \
+    "${BOX:-<none>}" "${IP:-<none>}" "${PLATFORM:-<none>}" "${STAGE:-<none>}" "${TUN0:-<vpn-down>}" "$PWD"
 }
 
 proxyon() {

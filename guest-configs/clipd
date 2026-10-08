@@ -1,0 +1,30 @@
+#!/bin/sh
+# clipd: clipboard-history daemon. Polls the X CLIPBOARD (Ctrl+C selections)
+# once a second and stores changes via cliphist (sqlite under ~/.cache/cliphist).
+# UI: Super+c → clip-menu (frosted rofi picker). Text only — image clipboards
+# (flameshot → n embeds) are skipped by design.
+# Self-heals DISPLAY/XAUTHORITY from i3's environ (wp-rotate pattern); flock
+# guards the loop so i3 reload/restart re-execs can't double it.
+: "${DISPLAY:=:0}"
+if [ -z "${XAUTHORITY:-}" ]; then
+  ip=$(pgrep -x i3 | head -1)
+  [ -n "$ip" ] && XAUTHORITY=$(tr "\0" "\n" < /proc/"$ip"/environ 2>/dev/null | sed -n "s/^XAUTHORITY=//p" | head -1)
+fi
+export DISPLAY XAUTHORITY
+command -v cliphist >/dev/null 2>&1 || { echo "clipd: cliphist not installed (sudo apt install cliphist)"; exit 1; }
+command -v xclip    >/dev/null 2>&1 || exit 1
+exec 9>"$HOME/.cache/clipd.lock"; flock -n 9 || exit 0
+
+# cap history at 500 entries: prune the tail once an hour (t=3600 polls)
+last=""
+t=0
+while :; do
+  cur=$(xclip -o -selection clipboard 2>/dev/null)
+  if [ -n "$cur" ] && [ "$cur" != "$last" ]; then
+    printf '%s' "$cur" | cliphist store
+    last=$cur
+  fi
+  t=$((t + 1))
+  [ $t -ge 3600 ] && { cliphist list 2>/dev/null | tail -n +501 | cliphist delete 2>/dev/null; t=0; }
+  sleep 1
+done

@@ -1,0 +1,23 @@
+#!/bin/sh
+# clip-menu: clipboard history picker (cliphist + rofi; theme from config.rasi
+# — the same frosted amber as the app launcher). Bound to Super+c.
+#   Enter   copy the entry back to the clipboard (paste: kitty Ctrl+Shift+V)
+#   Esc     cancel
+#   clip-menu -d   DELETE mode: same picker, Enter removes the entry
+# rofi 2.0 trap: dmenu exit codes are normalized (accept/accept-alt/custom
+# all RC=0) — no in-menu action routing, hence the explicit -d mode.
+: "${DISPLAY:=:0}"
+export DISPLAY
+
+mode=copy
+[ "${1:-}" = "-d" ] || [ "${1:-}" = "del" ] && mode=del
+p=clipboard
+[ "$mode" = del ] && p='clipboard — delete'
+
+sel=$(cliphist list 2>/dev/null | rofi -dmenu -i -p "$p")
+[ -n "$sel" ] || exit 0
+if [ "$mode" = del ]; then
+  printf '%s' "$sel" | cliphist delete && notify-send -u low -t 1500 clipboard 'entry deleted'
+else
+  printf '%s' "$sel" | cliphist decode | xclip -selection clipboard -in
+fi

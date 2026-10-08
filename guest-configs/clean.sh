@@ -63,6 +63,11 @@ zap_dir  ~/.pi/agent/history ~/.pi/agent/sessions ~/.pi/subagent
 
 echo "clean: workbench helpers"
 zap_file ~/.cache/n-clip.json
+if command -v cliphist >/dev/null 2>&1; then
+    # clipboard history: copied creds live here in plaintext
+    if [ -n "$DRY" ]; then echo "  = cliphist history"
+    else cliphist wipe >/dev/null 2>&1 && echo "  = cliphist history"; fi
+fi
 for f in /tmp/nb-pane-ready-*; do
     [ -f "$f" ] || continue
     if [ -n "$DRY" ]; then echo "  x $f"; else rm -f "$f"; echo "  x $f"; fi

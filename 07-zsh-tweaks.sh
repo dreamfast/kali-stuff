@@ -231,7 +231,7 @@ echo "zsh tweaks applied. Live in a NEW shell (or: source ~/.zshrc)"
 EOF
 
 # ------------------------------------------------------------- helper pushes
-for b in box n nhosts polybar-target polybar-vpn wrec pane-cmd; do
+for b in box n nhosts polybar-target polybar-vpn wrec pane-cmd clipd clip-menu; do
   kssh "cat > ~/.local/bin/$b && chmod 755 ~/.local/bin/$b" < "guest-configs/$b"
 done
 # fresh-start hygiene script lives in HOME per user preference, not on PATH

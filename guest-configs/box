@@ -229,14 +229,25 @@ def refresh_box_agents_md(bdir: Path, target: str, notepath: Path | None) -> Non
 
 # ------------------------------------------------------------- scaffolding
 
+# TUN0: this box's VPN exit (tun0 IPv4) — exported ONLY while the VPN is up.
+# Direnv snapshots it when .envrc is (re)evaluated: cd in, direnv reload,
+# `stage` switch, or a box -i IP sync (all rewrite/trigger the eval; panes
+# pick it up at their next prompt). Connect the VPN BEFORE entering the box.
+TUN0_BLOCK = """_tun0=$(ip -4 addr show tun0 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
+[ -n "$_tun0" ] && export TUN0=$_tun0
+unset _tun0
+"""
+
+
 def write_envrc(bdir: Path, name: str, target: str, platform: str) -> None:
-    (bdir / ".envrc").write_text(f"""# {name}: per-box environment (direnv: loads on cd in, unloads on cd out)
+    (bdir / ".envrc").write_text(
+        f"""# {name}: per-box environment (direnv: loads on cd in, unloads on cd out)
 # Edited this file? Run: direnv allow {bdir}
 export BOX={name}
 export IP={target or 'REPLACE_ME'}
 export PLATFORM={platform}
 export STAGE=recon
-""")
+""" + TUN0_BLOCK)
 
 
 def scaffold(bdir: Path, name: str, target: str, plat: str) -> Path | None:
@@ -278,6 +289,12 @@ def reenter(bdir: Path, name: str, target: str, plat: str) -> None:
         envrc.write_text(re.sub(r"^export IP=.*", f"export IP={target}", envrc.read_text(), flags=re.MULTILINE))
         run("direnv", "allow", str(bdir), devnull=True)
         say(f".envrc IP -> {target}")
+    # TUN0 (tun0 VPN ip) migration for boxes scaffolded before it existed
+    if "export TUN0" not in envrc.read_text():
+        with envrc.open("a") as fh:
+            fh.write("\n" + TUN0_BLOCK.lstrip("\n"))
+        run("direnv", "allow", str(bdir), devnull=True)
+        say(".envrc: +$TUN0 (tun0 VPN ip, set only while the VPN is up; panes pick it up at their next prompt)")
     # per-box AGENTS.md: recreate when missing, refresh ip/note when learned
     if not (bdir / "AGENTS.md").is_file():
         penv = envrc_field(envrc, "PLATFORM") if envrc.is_file() else ""
